@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -9,69 +10,74 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 const (
-	viaVendorID  = 0x342D
-	viaProductID = 0xE4C2
-
 	cmdGetProtocolVersion = 0x01
-	cmdGetKeycode         = 0x04
+	cmdSetKeycode         = 0x05
 	cmdGetLayerCount      = 0x11
+	cmdGetKeymapBuffer    = 0x12
 
 	reportSize = 32
 )
 
 func main() {
-	rows := flag.Int("rows", 0, "matrix rows from the board's VIA JSON (required to dump the keymap)")
-	cols := flag.Int("cols", 0, "matrix cols from the board's VIA JSON (required to dump the keymap)")
+	defPath := flag.String("def", "", "VIA v3 definition JSON for the board")
 	flag.Parse()
-
-	f, path, version, err := findVIADevice(viaVendorID, viaProductID)
-	if err != nil {
+	if *defPath == "" {
+		fmt.Fprintln(os.Stderr, "usage: via-terminal --def board.json")
+		os.Exit(2)
+	}
+	if err := run(*defPath); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
-	}
-	defer f.Close()
-
-	fmt.Println("VIA interface:", path)
-	fmt.Println("protocol version:", version)
-
-	layers, err := getLayerCount(f)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
-	fmt.Println("layers:", layers)
-
-	if *rows == 0 || *cols == 0 {
-		fmt.Println(`pass --rows and --cols (from the board's VIA JSON "matrix" field) to dump layer 0`)
-		return
-	}
-
-	fmt.Println("layer 0:")
-	for row := 0; row < *rows; row++ {
-		vals := make([]string, *cols)
-		for col := 0; col < *cols; col++ {
-			kc, err := getKeycode(f, 0, row, col)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				os.Exit(1)
-			}
-			vals[col] = fmt.Sprintf("0x%04X", kc)
-		}
-		fmt.Println(" ", strings.Join(vals, " "))
 	}
 }
 
-// findVIADevice scans /dev/hidraw* for a matching vendor/product, then
-// confirms which of the board's several HID interfaces is the VIA one
-// by sending get-protocol-version: only that interface echoes it back.
-func findVIADevice(vid, pid uint16) (f *os.File, path string, version uint16, err error) {
+func run(defPath string) error {
+	def, err := loadDefinition(defPath)
+	if err != nil {
+		return err
+	}
+	f, version, err := findVIADevice(def.VendorID, def.ProductID)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if version < 12 {
+		return fmt.Errorf("VIA protocol v%d is not supported yet, only v12 and later", version)
+	}
+
+	layers, err := getLayerCount(f)
+	if err != nil {
+		return err
+	}
+	keymap, err := readKeymap(f, int(layers), def.Rows, def.Cols)
+	if err != nil {
+		return err
+	}
+	_, err = tea.NewProgram(newModel(def, f, version, int(layers), keymap)).Run()
+	return err
+}
+
+// viaUsage is QMK's raw HID descriptor prefix: usage page 0xFF60, usage 0x61.
+var viaUsage = []byte{0x06, 0x60, 0xFF, 0x09, 0x61}
+
+// findVIADevice scans /dev/hidraw* for the matching vendor/product and picks
+// the interface with the VIA usage page. Probing the other interfaces would
+// wait out the read timeout and write VIA packets into their reports.
+func findVIADevice(vid, pid uint16) (f *os.File, version uint16, err error) {
 	candidates, _ := filepath.Glob("/dev/hidraw*")
 	for _, p := range candidates {
-		uevent, rerr := os.ReadFile("/sys/class/hidraw/" + filepath.Base(p) + "/device/uevent")
+		sys := "/sys/class/hidraw/" + filepath.Base(p) + "/device/"
+		uevent, rerr := os.ReadFile(sys + "uevent")
 		if rerr != nil || !hasHIDID(string(uevent), vid, pid) {
+			continue
+		}
+		desc, rerr := os.ReadFile(sys + "report_descriptor")
+		if rerr != nil || !bytes.Contains(desc, viaUsage) {
 			continue
 		}
 		dev, oerr := os.OpenFile(p, os.O_RDWR, 0)
@@ -80,11 +86,11 @@ func findVIADevice(vid, pid uint16) (f *os.File, path string, version uint16, er
 		}
 		resp, cerr := doCommand(dev, cmdGetProtocolVersion)
 		if cerr == nil {
-			return dev, p, binary.BigEndian.Uint16(resp[1:3]), nil
+			return dev, binary.BigEndian.Uint16(resp[1:3]), nil
 		}
 		dev.Close()
 	}
-	return nil, "", 0, fmt.Errorf("no VIA interface found for %04X:%04X", vid, pid)
+	return nil, 0, fmt.Errorf("no VIA interface found for %04X:%04X", vid, pid)
 }
 
 func hasHIDID(uevent string, vid, pid uint16) bool {
@@ -112,12 +118,30 @@ func getLayerCount(f *os.File) (uint8, error) {
 	return resp[1], nil
 }
 
-func getKeycode(f *os.File, layer, row, col int) (uint16, error) {
-	resp, err := doCommand(f, cmdGetKeycode, byte(layer), byte(row), byte(col))
-	if err != nil {
-		return 0, err
+// readKeymap reads every layer in 28-byte chunks, which is far fewer round
+// trips than asking for each key. The result is indexed by
+// (layer*rows+row)*cols+col.
+func readKeymap(f *os.File, layers, rows, cols int) ([]uint16, error) {
+	size := layers * rows * cols * 2
+	buf := make([]byte, 0, size)
+	for off := 0; off < size; off += 28 {
+		n := min(28, size-off)
+		resp, err := doCommand(f, cmdGetKeymapBuffer, byte(off>>8), byte(off), byte(n))
+		if err != nil {
+			return nil, err
+		}
+		buf = append(buf, resp[4:4+n]...)
 	}
-	return binary.BigEndian.Uint16(resp[4:6]), nil
+	codes := make([]uint16, size/2)
+	for i := range codes {
+		codes[i] = binary.BigEndian.Uint16(buf[2*i:])
+	}
+	return codes, nil
+}
+
+func setKeycode(f *os.File, layer, row, col int, code uint16) error {
+	_, err := doCommand(f, cmdSetKeycode, byte(layer), byte(row), byte(col), byte(code>>8), byte(code))
+	return err
 }
 
 // doCommand writes a 32-byte VIA HID report and reads the response,
