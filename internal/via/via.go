@@ -1,17 +1,15 @@
-// Package via talks the VIA raw HID protocol to QMK keyboards through
-// Linux hidraw.
+// Package via talks the VIA raw HID protocol to QMK keyboards. HID access
+// goes through rafaelmartins.com/p/usbhid, which covers Linux, macOS and
+// Windows in pure Go, so every platform cross-compiles without cgo.
 package via
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
+
+	"rafaelmartins.com/p/usbhid"
 )
 
 const (
@@ -35,86 +33,59 @@ const (
 
 	reportSize = 32
 	chunkSize  = reportSize - 4
+
+	// QMK's raw HID interface, which VIA uses.
+	usagePage = 0xFF60
+	usage     = 0x61
 )
 
 // ErrUnhandled means the firmware doesn't implement a command, e.g. encoder
 // mapping on a board built without it.
 var ErrUnhandled = errors.New("command not supported by the firmware")
 
-// usage is QMK's raw HID descriptor prefix: usage page 0xFF60, usage 0x61.
-var usage = []byte{0x06, 0x60, 0xFF, 0x09, 0x61}
-
-// Info is a hidraw interface that carries the VIA usage page.
+// Info is a keyboard's VIA interface, found but not opened yet.
 type Info struct {
 	Path                string
 	VendorID, ProductID uint16
+	dev                 *usbhid.Device
 }
 
-// Devices lists VIA interfaces from sysfs without opening them. Filtering on
-// the usage page matters: probing a board's other interfaces would wait out
-// the read timeout and write VIA packets into their reports.
+// Devices lists VIA interfaces without opening them. Filtering on the usage
+// page matters: probing a board's other interfaces would wait out the read
+// timeout and write VIA packets into their reports.
 func Devices() []Info {
+	devs, _ := usbhid.Enumerate(func(d *usbhid.Device) bool {
+		return d.UsagePage() == usagePage && d.Usage() == usage
+	})
 	var infos []Info
-	paths, _ := filepath.Glob("/dev/hidraw*")
-	for _, p := range paths {
-		sys := "/sys/class/hidraw/" + filepath.Base(p) + "/device/"
-		uevent, err := os.ReadFile(sys + "uevent")
-		if err != nil {
-			continue
-		}
-		vid, pid, ok := parseHIDID(string(uevent))
-		if !ok {
-			continue
-		}
-		desc, err := os.ReadFile(sys + "report_descriptor")
-		if err != nil || !bytes.Contains(desc, usage) {
-			continue
-		}
-		infos = append(infos, Info{p, vid, pid})
+	for _, d := range devs {
+		infos = append(infos, Info{d.Path(), d.VendorId(), d.ProductId(), d})
 	}
 	return infos
 }
 
-func parseHIDID(uevent string) (vid, pid uint16, ok bool) {
-	for _, line := range strings.Split(uevent, "\n") {
-		id, found := strings.CutPrefix(line, "HID_ID=")
-		if !found {
-			continue
-		}
-		parts := strings.Split(id, ":")
-		if len(parts) != 3 {
-			return 0, 0, false
-		}
-		v, verr := strconv.ParseUint(parts[1], 16, 16)
-		p, perr := strconv.ParseUint(parts[2], 16, 16)
-		return uint16(v), uint16(p), verr == nil && perr == nil
-	}
-	return 0, 0, false
-}
-
 type Device struct {
-	f       *os.File
+	dev     *usbhid.Device
 	Version uint16
 }
 
 // Open opens a VIA interface and reads its protocol version, which doubles
 // as the handshake.
-func Open(path string) (*Device, error) {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
+func Open(info Info) (*Device, error) {
+	if err := info.dev.Open(false); err != nil {
 		return nil, err
 	}
-	d := &Device{f: f}
+	d := &Device{dev: info.dev}
 	resp, err := d.command(cmdGetProtocolVersion)
 	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("%s: %w", path, err)
+		info.dev.Close()
+		return nil, fmt.Errorf("%s: %w", info.Path, err)
 	}
 	d.Version = binary.BigEndian.Uint16(resp[1:3])
 	return d, nil
 }
 
-func (d *Device) Close() error { return d.f.Close() }
+func (d *Device) Close() error { return d.dev.Close() }
 
 func (d *Device) LayerCount() (int, error) {
 	resp, err := d.command(cmdGetLayerCount)
@@ -281,24 +252,36 @@ func (d *Device) command(cmd byte, args ...byte) ([reportSize]byte, error) {
 }
 
 // commandWithin writes a 32-byte VIA report and reads the response, checking
-// the command byte is echoed back.
+// the command byte is echoed back. Reads block until a report arrives, so
+// they run aside with a deadline; a board that never answers leaves one
+// goroutine waiting, which only happens once something is already broken.
 func (d *Device) commandWithin(timeout time.Duration, cmd byte, args ...byte) ([reportSize]byte, error) {
-	var req [reportSize]byte
+	var req, resp [reportSize]byte
 	req[0] = cmd
 	copy(req[1:], args)
-
-	if _, err := d.f.Write(req[:]); err != nil {
-		return [reportSize]byte{}, err
-	}
-	if err := d.f.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return [reportSize]byte{}, err
-	}
-	var resp [reportSize]byte
-	n, err := d.f.Read(resp[:])
-	if err != nil {
+	if err := d.dev.SetOutputReport(0, req[:]); err != nil {
 		return resp, err
 	}
-	if n != reportSize {
+
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, data, err := d.dev.GetInputReport()
+		done <- result{data, err}
+	}()
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(timeout):
+		return resp, fmt.Errorf("command 0x%02X: the board didn't answer", cmd)
+	}
+	if r.err != nil {
+		return resp, r.err
+	}
+	if n := copy(resp[:], r.data); n != reportSize {
 		return resp, fmt.Errorf("short read: %d bytes", n)
 	}
 	if resp[0] == cmdUnhandled {

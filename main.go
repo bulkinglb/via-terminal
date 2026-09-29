@@ -62,7 +62,7 @@ func run(defPath, cmd, file string) error {
 	if err != nil {
 		return err
 	}
-	dev, err := via.Open(info.Path)
+	dev, err := via.Open(info)
 	if err != nil {
 		return err
 	}
