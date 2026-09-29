@@ -2,6 +2,9 @@ package defs
 
 import (
 	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -25,5 +28,33 @@ func TestParseKLE(t *testing.T) {
 	}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("got  %+v\nwant %+v", keys, want)
+	}
+}
+
+func TestFind(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	sub, _ := fs.Sub(bundled, "keyboards")
+	names, _ := fs.Glob(sub, "*.json")
+	for _, name := range names {
+		data, _ := fs.ReadFile(sub, name)
+		if _, err := parse(data); err != nil {
+			t.Errorf("bundled %s: %v", name, err)
+		}
+	}
+
+	def, err := Find(0x342D, 0xE4C2)
+	if err != nil || def.Rows != 6 || def.Cols != 15 {
+		t.Fatalf("bundled M1 V5 ISO: %+v, %v", def, err)
+	}
+
+	userDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "via-terminal", "keyboards")
+	os.MkdirAll(userDir, 0o755)
+	os.WriteFile(filepath.Join(userDir, "broken.json"), []byte("{"), 0o644)
+	os.WriteFile(filepath.Join(userDir, "mine.json"), []byte(`{"name": "Mine", "vendorId": "0x342D", "productId": "0xE4C2", "matrix": {"rows": 1, "cols": 1}, "layouts": {"keymap": [["0,0"]]}}`), 0o644)
+	if def, err := Find(0x342D, 0xE4C2); err != nil || def.Name != "Mine" {
+		t.Errorf("user folder should win: %+v, %v", def, err)
+	}
+	if _, err := Find(0xFFFF, 0x0001); err == nil {
+		t.Error("expected an error for an unknown board")
 	}
 }
