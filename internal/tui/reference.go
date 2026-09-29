@@ -23,8 +23,8 @@ func newReference(layers int, custom []string) *picker {
 	return p
 }
 
-// refTab is the reference's tab index, after the definition's menus.
-func (m model) refTab() int { return len(m.def.Menus) + 1 }
+// refTab is the reference's tab index, the last one.
+func (m model) refTab() int { return len(m.def.Menus) + 2 }
 
 // updateReference types every key into the search, q included, so only
 // Ctrl+C quits here.

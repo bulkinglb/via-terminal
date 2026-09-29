@@ -24,9 +24,10 @@ type model struct {
 	keymap    []uint16
 	gridLines int
 
-	tab    int     // 0 is the keymap, then one tab per definition menu, then the reference
+	tab    int     // 0 is the keymap, then one tab per definition menu, macros, the reference
 	picker *picker // open search list, nil when closed
 	ref    *picker // keycode reference, always there
+	macros *macroState
 	status string
 
 	layer          int
@@ -63,6 +64,12 @@ func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16)
 	for _, k := range keycodes.Picker(layers, def.Custom) {
 		m.keycodeChoices = append(m.keycodeChoices, choice{k.Name, k.Long, int(k.Code), k.Desc})
 	}
+	count, _ := dev.MacroCount()
+	m.macros = &macroState{count: count}
+	for i := range count {
+		code := 0x7700 + uint16(i)
+		m.keycodeChoices = append(m.keycodeChoices, choice{keycodes.Name(code, nil), "", int(code), keycodes.Describe(code)})
+	}
 	for _, menu := range def.Menus {
 		for _, c := range menu.Items {
 			if !c.HasValue() {
@@ -81,28 +88,30 @@ func (m model) Init() tea.Cmd { return nil }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		s := msg.String()
-		if s == "ctrl+c" || s == "q" && m.picker == nil && m.tab != m.refTab() {
+		switch s := msg.String(); {
+		case s == "ctrl+c":
 			return m.save(), tea.Quit
-		}
-		if m.picker != nil {
+		case m.picker != nil:
 			return m.updatePicker(msg), nil
-		}
-		switch s {
-		case "tab":
+		case m.macros.editing:
+			return m.updateMacroEdit(msg), nil
+		case s == "tab":
 			m = m.switchTab(m.tab + 1)
 			return m, m.tick()
-		case "shift+tab":
+		case s == "shift+tab":
 			m = m.switchTab(m.tab - 1)
 			return m, m.tick()
-		}
-		switch m.tab {
-		case 0:
-			return m.updateMapping(s), nil
-		case m.refTab():
+		case m.tab == m.refTab():
 			return m.updateReference(msg), nil
+		case s == "q":
+			return m.save(), tea.Quit
+		case m.tab == 0:
+			return m.updateMapping(s), nil
+		case m.tab == m.macroTab():
+			return m.updateMacros(s), nil
+		default:
+			return m.updateMenu(s), nil
 		}
-		return m.updateMenu(s), nil
 
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
@@ -116,6 +125,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.tab {
 		case 0:
 			return m.clickMapping(mouse.X, mouse.Y), nil
+		case m.macroTab():
+			if !m.macros.editing {
+				return m.clickMacros(mouse.Y), nil
+			}
+			return m, nil
 		case m.refTab():
 			return m, nil
 		}
@@ -136,7 +150,7 @@ func (m model) tabNames() []string {
 	for _, menu := range m.def.Menus {
 		names = append(names, strings.ToUpper(menu.Label))
 	}
-	return append(names, "KEYCODES")
+	return append(names, "MACROS", "KEYCODES")
 }
 
 // tabAt matches the tab bar's layout: each name padded by a space on both
@@ -156,9 +170,12 @@ func (m model) tabAt(x int) int {
 func (m model) switchTab(t int) model {
 	m.status = ""
 	m = m.save()
-	n := len(m.def.Menus) + 2
+	n := len(m.def.Menus) + 3
 	m.tab, m.row, m.picker = (t%n+n)%n, 0, nil
 	m.tickGen++
+	if m.tab == m.macroTab() {
+		m.loadMacros()
+	}
 	return m
 }
 
@@ -192,6 +209,8 @@ func (m model) View() tea.View {
 	switch m.tab {
 	case 0:
 		m.viewMapping(&b)
+	case m.macroTab():
+		m.viewMacros(&b)
 	case m.refTab():
 		m.viewReference(&b)
 	default:

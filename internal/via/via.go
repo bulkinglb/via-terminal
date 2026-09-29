@@ -22,6 +22,11 @@ const (
 	cmdCustomGetValue     = 0x08
 	cmdCustomSave         = 0x09
 	cmdGetLayerCount      = 0x11
+	cmdMacroCount         = 0x0C
+	cmdMacroBufferSize    = 0x0D
+	cmdGetMacroBuffer     = 0x0E
+	cmdSetMacroBuffer     = 0x0F
+	cmdResetMacros        = 0x10
 	cmdGetKeymapBuffer    = 0x12
 	cmdSetKeymapBuffer    = 0x13
 	cmdGetEncoder         = 0x14
@@ -119,20 +124,14 @@ func (d *Device) LayerCount() (int, error) {
 	return int(resp[1]), nil
 }
 
-// Keymap reads every layer in 28-byte chunks, which is far fewer round trips
-// than asking for each key. The result is indexed by (layer*rows+row)*cols+col.
+// Keymap reads every layer at once. The result is indexed by
+// (layer*rows+row)*cols+col.
 func (d *Device) Keymap(layers, rows, cols int) ([]uint16, error) {
-	size := layers * rows * cols * 2
-	buf := make([]byte, 0, size)
-	for off := 0; off < size; off += chunkSize {
-		n := min(chunkSize, size-off)
-		resp, err := d.command(cmdGetKeymapBuffer, byte(off>>8), byte(off), byte(n))
-		if err != nil {
-			return nil, err
-		}
-		buf = append(buf, resp[4:4+n]...)
+	buf, err := d.readBuffer(cmdGetKeymapBuffer, layers*rows*cols*2)
+	if err != nil {
+		return nil, err
 	}
-	codes := make([]uint16, size/2)
+	codes := make([]uint16, len(buf)/2)
 	for i := range codes {
 		codes[i] = binary.BigEndian.Uint16(buf[2*i:])
 	}
@@ -145,10 +144,61 @@ func (d *Device) SetKeymap(codes []uint16) error {
 	for i, code := range codes {
 		binary.BigEndian.PutUint16(buf[2*i:], code)
 	}
-	for off := 0; off < len(buf); off += chunkSize {
-		chunk := buf[off:min(off+chunkSize, len(buf))]
+	return d.writeBuffer(cmdSetKeymapBuffer, 0, buf)
+}
+
+func (d *Device) MacroCount() (int, error) {
+	resp, err := d.command(cmdMacroCount)
+	return int(resp[1]), err
+}
+
+func (d *Device) MacroBufferSize() (int, error) {
+	resp, err := d.command(cmdMacroBufferSize)
+	return int(binary.BigEndian.Uint16(resp[1:3])), err
+}
+
+func (d *Device) MacroBuffer(size int) ([]byte, error) {
+	return d.readBuffer(cmdGetMacroBuffer, size)
+}
+
+// SetMacroBuffer replaces all macros the way VIA does: clear the buffer,
+// mark its last byte as a write in progress, write, then clear the mark.
+func (d *Device) SetMacroBuffer(data []byte, size int) error {
+	if len(data) > size {
+		return fmt.Errorf("macros need %d bytes, the board has %d", len(data), size)
+	}
+	// Clearing rewrites the whole buffer in EEPROM before the board replies.
+	if _, err := d.commandWithin(10*time.Second, cmdResetMacros); err != nil {
+		return err
+	}
+	if err := d.writeBuffer(cmdSetMacroBuffer, size-1, []byte{0xFF}); err != nil {
+		return err
+	}
+	err := d.writeBuffer(cmdSetMacroBuffer, 0, data)
+	return errors.Join(err, d.writeBuffer(cmdSetMacroBuffer, size-1, []byte{0x00}))
+}
+
+// readBuffer reads size bytes in 28-byte chunks, which is far fewer round
+// trips than reading item by item.
+func (d *Device) readBuffer(cmd byte, size int) ([]byte, error) {
+	buf := make([]byte, 0, size)
+	for off := 0; off < size; off += chunkSize {
+		n := min(chunkSize, size-off)
+		resp, err := d.command(cmd, byte(off>>8), byte(off), byte(n))
+		if err != nil {
+			return nil, err
+		}
+		buf = append(buf, resp[4:4+n]...)
+	}
+	return buf, nil
+}
+
+func (d *Device) writeBuffer(cmd byte, start int, data []byte) error {
+	for i := 0; i < len(data); i += chunkSize {
+		chunk := data[i:min(i+chunkSize, len(data))]
+		off := start + i
 		args := append([]byte{byte(off >> 8), byte(off), byte(len(chunk))}, chunk...)
-		if _, err := d.command(cmdSetKeymapBuffer, args...); err != nil {
+		if _, err := d.command(cmd, args...); err != nil {
 			return err
 		}
 	}
