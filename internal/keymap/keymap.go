@@ -1,5 +1,5 @@
-// Package keymap reads and writes keymap backup files: every layer of the
-// keymap plus encoder rotations, as keycode names a person can edit.
+// Package keymap reads and writes backup files: every layer of the keymap,
+// encoder rotations and macros, as text a person can edit.
 package keymap
 
 import (
@@ -11,11 +11,21 @@ import (
 
 	"via-terminal/internal/defs"
 	"via-terminal/internal/keycodes"
+	"via-terminal/internal/macros"
 )
 
+// Backup is everything a backup file holds. Keys and Encoders are laid out
+// like via.Device returns them; Macros are in the macros package's text
+// form. Encoders and Macros are nil when a board or file has none.
+type Backup struct {
+	Keys, Encoders []uint16
+	Macros         []string
+}
+
 // Encode writes the backup with one keyboard row per line so it diffs well
-// in dotfiles. keys and encoders are laid out like via.Device returns them.
-func Encode(w io.Writer, def defs.Definition, keys, encoders []uint16) error {
+// in dotfiles.
+func Encode(w io.Writer, def defs.Definition, backup Backup) error {
+	keys, encoders := backup.Keys, backup.Encoders
 	name := func(code uint16) string {
 		n := keycodes.Name(code, def.Custom)
 		// Duplicate custom names could make a name ambiguous; hex never is.
@@ -64,23 +74,45 @@ func Encode(w io.Writer, def defs.Definition, keys, encoders []uint16) error {
 		}
 		b.WriteString("\n  ]")
 	}
+	if backup.Macros != nil {
+		b.WriteString(",\n  \"macros\": [")
+		for i, text := range backup.Macros {
+			fmt.Fprintf(&b, "%s\n    %s", sep(i), line(text))
+		}
+		b.WriteString("\n  ]")
+	}
 	b.WriteString("\n}\n")
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
 // Decode reads a backup for def's board with the given layer count. It
-// checks everything before returning, so nothing half-valid gets written.
-// encoders is nil when the file has none.
-func Decode(r io.Reader, def defs.Definition, layers int) (keys, encoders []uint16, err error) {
-	var f struct {
-		VendorID, ProductID string
-		Layers              [][][]string
-		Encoders            [][][2]string
-	}
+// checks everything it can before returning, so nothing half-valid gets
+// written; whether the macros fit the board's buffer is up to the caller.
+func Decode(r io.Reader, def defs.Definition, layers int) (Backup, error) {
+	var f file
 	if err := json.NewDecoder(r).Decode(&f); err != nil {
-		return nil, nil, err
+		return Backup{}, err
 	}
+	if _, err := macros.Encode(f.Macros); err != nil {
+		return Backup{}, err
+	}
+	keys, encoders, err := f.codes(def, layers)
+	if err != nil {
+		return Backup{}, err
+	}
+	return Backup{keys, encoders, f.Macros}, nil
+}
+
+type file struct {
+	VendorID, ProductID string
+	Layers              [][][]string
+	Encoders            [][][2]string
+	Macros              []string
+}
+
+// codes parses the keymap and encoder names after checking they fit def.
+func (f file) codes(def defs.Definition, layers int) (keys, encoders []uint16, err error) {
 	vid, _ := strconv.ParseUint(f.VendorID, 0, 16)
 	pid, _ := strconv.ParseUint(f.ProductID, 0, 16)
 	if uint16(vid) != def.VendorID || uint16(pid) != def.ProductID {

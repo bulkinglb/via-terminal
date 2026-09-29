@@ -12,6 +12,7 @@ import (
 
 	"via-terminal/internal/defs"
 	"via-terminal/internal/keymap"
+	"via-terminal/internal/macros"
 	"via-terminal/internal/tui"
 	"via-terminal/internal/via"
 )
@@ -20,11 +21,11 @@ const usage = `usage: via-terminal [--def board.json] [command]
 
 commands:
   (none)          open the keymap editor
-  export [file]   save the keymap to file, or print it
-  import file     load a keymap saved by export
+  export [file]   save the keymap and macros to file, or print them
+  import file     load a file saved by export
   reset           restore the firmware's default keymap
 
-import and reset save a backup of the current keymap first.
+import and reset save a backup of the board first.
 
 `
 
@@ -81,14 +82,14 @@ func run(defPath, cmd, file string) error {
 		return tui.Run(def, dev, layers, keys)
 	}
 
-	encoders, err := readEncoders(dev, def, layers)
+	current, macroSize, err := readBackup(dev, def, layers, keys)
 	if err != nil {
 		return err
 	}
 	switch cmd {
 	case "export":
 		var buf bytes.Buffer
-		if err := keymap.Encode(&buf, def, keys, encoders); err != nil {
+		if err := keymap.Encode(&buf, def, current); err != nil {
 			return err
 		}
 		if file == "" {
@@ -103,51 +104,81 @@ func run(defPath, cmd, file string) error {
 			return err
 		}
 		defer f.Close()
-		newKeys, newEncoders, err := keymap.Decode(f, def, layers)
+		next, err := keymap.Decode(f, def, layers)
 		if err != nil {
 			return fmt.Errorf("%s: %w", file, err)
 		}
-		if err := backup(def, keys, encoders); err != nil {
+		var macroBuf []byte
+		if next.Macros != nil {
+			if len(next.Macros) != len(current.Macros) {
+				return fmt.Errorf("%s has %d macros, the board has %d", file, len(next.Macros), len(current.Macros))
+			}
+			macroBuf, _ = macros.Encode(next.Macros)
+			if len(macroBuf) > macroSize {
+				return fmt.Errorf("%s: the macros need %d bytes, the board has %d", file, len(macroBuf), macroSize)
+			}
+		}
+		if err := backup(def, current); err != nil {
 			return err
 		}
-		if err := dev.SetKeymap(newKeys); err != nil {
+		if err := dev.SetKeymap(next.Keys); err != nil {
 			return err
 		}
-		if newEncoders != nil && encoders != nil {
-			if err := dev.SetEncoders(def.Encoders, newEncoders); err != nil {
+		if next.Encoders != nil && current.Encoders != nil {
+			if err := dev.SetEncoders(def.Encoders, next.Encoders); err != nil {
+				return err
+			}
+		}
+		if macroBuf != nil {
+			if err := dev.SetMacroBuffer(macroBuf, macroSize); err != nil {
 				return err
 			}
 		}
 		fmt.Println("imported", file)
 
 	case "reset":
-		if err := backup(def, keys, encoders); err != nil {
+		if err := backup(def, current); err != nil {
 			return err
 		}
 		if err := dev.ResetKeymap(); err != nil {
 			return err
 		}
-		fmt.Println("keymap reset to the firmware default")
+		fmt.Println("keymap reset to the firmware default, macros are unchanged")
 	}
 	return nil
 }
 
-// readEncoders returns nil when the board has no encoders or its firmware
-// wasn't built with encoder mapping.
-func readEncoders(dev *via.Device, def defs.Definition, layers int) ([]uint16, error) {
-	if def.Encoders == 0 {
-		return nil, nil
+// readBackup reads what export and backups save besides the keymap: encoder
+// rotations and macros. Either is left out when the board or its firmware
+// doesn't have it. It also returns the macro buffer size.
+func readBackup(dev *via.Device, def defs.Definition, layers int, keys []uint16) (keymap.Backup, int, error) {
+	b := keymap.Backup{Keys: keys}
+	if def.Encoders > 0 {
+		codes, err := dev.Encoders(layers, def.Encoders)
+		if err != nil && !errors.Is(err, via.ErrUnhandled) {
+			return b, 0, err
+		}
+		b.Encoders = codes
 	}
-	codes, err := dev.Encoders(layers, def.Encoders)
-	if errors.Is(err, via.ErrUnhandled) {
-		return nil, nil
+	count, err := dev.MacroCount()
+	if err != nil || count == 0 {
+		return b, 0, nil
 	}
-	return codes, err
+	size, err := dev.MacroBufferSize()
+	if err != nil {
+		return b, 0, err
+	}
+	buf, err := dev.MacroBuffer(size)
+	if err != nil {
+		return b, 0, err
+	}
+	b.Macros, err = macros.Decode(buf, count)
+	return b, size, err
 }
 
-// backup saves the current keymap next to the user's definitions so an
-// import or reset can always be undone.
-func backup(def defs.Definition, keys, encoders []uint16) error {
+// backup saves the board's current state next to the user's definitions so
+// an import or reset can always be undone.
+func backup(def defs.Definition, current keymap.Backup) error {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return err
@@ -157,7 +188,7 @@ func backup(def defs.Definition, keys, encoders []uint16) error {
 		return err
 	}
 	var buf bytes.Buffer
-	if err := keymap.Encode(&buf, def, keys, encoders); err != nil {
+	if err := keymap.Encode(&buf, def, current); err != nil {
 		return err
 	}
 	// CreateTemp adds a random suffix, so two backups in the same second
@@ -173,7 +204,7 @@ func backup(def defs.Definition, keys, encoders []uint16) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	fmt.Println("backed up the current keymap, undo with: via-terminal import", f.Name())
+	fmt.Println("backed up the board, undo with: via-terminal import", f.Name())
 	return nil
 }
 
