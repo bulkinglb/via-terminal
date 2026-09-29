@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"github.com/bulkinglb/via-terminal/internal/defs"
@@ -29,13 +30,25 @@ import and reset save a backup of the board first.
 
 `
 
+// version is set by the Makefile for release builds.
+var version = "dev"
+
 func main() {
 	defPath := flag.String("def", "", "VIA v3 definition JSON (default: look up by vendor/product ID)")
+	showVersion := flag.Bool("version", false, "print the version")
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, usage)
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if *showVersion {
+		// go install records the module version instead of the Makefile's.
+		if info, ok := debug.ReadBuildInfo(); ok && version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = info.Main.Version
+		}
+		fmt.Println("via-terminal", version)
+		return
+	}
 	if err := run(*defPath, flag.Arg(0), flag.Arg(1)); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		if errors.Is(err, fs.ErrPermission) {
