@@ -23,16 +23,13 @@ type model struct {
 	keymap    []uint16
 	gridLines int
 
-	tab    int // 0 is the keymap, then one tab per definition menu
+	tab    int     // 0 is the keymap, then one tab per definition menu
+	picker *picker // open search list, nil when closed
 	status string
 
-	layer   int
-	sel     int
-	picking bool
-	query   string
-	all     []keycodes.Keycode
-	matches []keycodes.Keycode
-	pick    int
+	layer          int
+	sel            int
+	keycodeChoices []choice
 
 	values map[string]int // menu settings by control ID, absent if unreadable
 	row    int            // selected row on a menu tab
@@ -53,13 +50,15 @@ func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16)
 		layers:    layers,
 		keymap:    keymap,
 		gridLines: strings.Count(render(def.Keys, func(defs.Key) string { return "" }, -1), "\n") + 1,
-		all:       keycodes.Picker(layers, def.Custom),
 		values:    map[string]int{},
 		dirty:     map[byte]bool{},
 	}
+	for _, k := range keycodes.Picker(layers, def.Custom) {
+		m.keycodeChoices = append(m.keycodeChoices, choice{k.Name, k.Long, int(k.Code)})
+	}
 	for _, menu := range def.Menus {
 		for _, c := range menu.Items {
-			if c.Type == "" {
+			if !c.HasValue() {
 				continue
 			}
 			if v, err := dev.CustomValue(c.Channel, c.ValueID, c.Size()); err == nil {
@@ -76,10 +75,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		s := msg.String()
-		if s == "ctrl+c" || s == "q" && !m.picking {
+		if s == "ctrl+c" || s == "q" && m.picker == nil {
 			return m.save(), tea.Quit
 		}
-		if m.picking {
+		if m.picker != nil {
 			return m.updatePicker(msg), nil
 		}
 		switch s {
@@ -135,7 +134,7 @@ func (m model) switchTab(t int) model {
 	m.status = ""
 	m = m.save()
 	n := len(m.def.Menus) + 1
-	m.tab, m.row, m.picking = (t%n+n)%n, 0, false
+	m.tab, m.row, m.picker = (t%n+n)%n, 0, nil
 	return m
 }
 

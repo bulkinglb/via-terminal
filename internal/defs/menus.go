@@ -19,7 +19,18 @@ type Control struct {
 	Label, Type, ID, ShowIf string
 	Channel, ValueID        byte
 	Min, Max                int      // range
-	Options                 []Option // dropdown
+	Options                 []Option // dropdown, toggle (off, on), button (the value it sends)
+	Text                    string   // label: fixed text
+}
+
+// HasValue reports whether the board stores a value for the control that
+// can be read and changed.
+func (c Control) HasValue() bool {
+	switch c.Type {
+	case "range", "dropdown", "toggle", "color", "keycode":
+		return true
+	}
+	return false
 }
 
 type Option struct {
@@ -28,9 +39,9 @@ type Option struct {
 }
 
 // Size is how many bytes the board uses for the value: colors are hue and
-// saturation, ranges past 255 need two bytes.
+// saturation, keycodes are 16-bit, ranges past 255 need two bytes.
 func (c Control) Size() int {
-	if c.Type == "color" || c.Max > 255 {
+	if c.Type == "color" || c.Type == "keycode" || c.Max > 255 {
 		return 2
 	}
 	return 1
@@ -42,14 +53,19 @@ type rawItem struct {
 	Options             []json.RawMessage
 }
 
-// parseMenus skips VIA's built-in presets such as "qmk_rgb_matrix", which
-// are plain strings instead of objects.
+// parseMenus expands preset names like "qmk_rgb_matrix" and skips names it
+// doesn't know, as VIA does.
 func parseMenus(raw []json.RawMessage) ([]Menu, error) {
 	var menus []Menu
 	for _, r := range raw {
-		var m rawItem
-		if json.Unmarshal(r, &m) != nil {
+		var preset string
+		if json.Unmarshal(r, &preset) == nil {
+			menus = append(menus, presets[preset]...)
 			continue
+		}
+		var m rawItem
+		if err := json.Unmarshal(r, &m); err != nil {
+			return nil, fmt.Errorf("menus: %w", err)
 		}
 		items, err := parseItems(m.Content)
 		if err != nil {
@@ -85,19 +101,27 @@ func parseItems(content json.RawMessage) ([]Control, error) {
 	return items, nil
 }
 
+// parseControl only insists on [id, channel, value id] content for controls
+// that talk to the board, so a label or a type VIA added later still loads.
 func parseControl(it rawItem) (Control, error) {
-	bad := fmt.Errorf("content should be [id, channel, value id], got %s", it.Content)
+	c := Control{Label: it.Label, Type: it.Type, ShowIf: it.ShowIf, Max: 255}
 	var content []any
-	if json.Unmarshal(it.Content, &content) != nil || len(content) < 3 {
-		return Control{}, bad
+	json.Unmarshal(it.Content, &content)
+	if len(content) == 1 && it.Type == "label" {
+		c.Text, _ = content[0].(string)
+		return c, nil
 	}
-	id, _ := content[0].(string)
-	channel, chOK := content[1].(float64)
-	valueID, idOK := content[2].(float64)
-	if id == "" || !chOK || !idOK {
-		return Control{}, bad
+	var chOK, idOK bool
+	var channel, valueID float64
+	if len(content) >= 3 {
+		c.ID, _ = content[0].(string)
+		channel, chOK = content[1].(float64)
+		valueID, idOK = content[2].(float64)
+		c.Channel, c.ValueID = byte(channel), byte(valueID)
 	}
-	c := Control{Label: it.Label, Type: it.Type, ID: id, ShowIf: it.ShowIf, Channel: byte(channel), ValueID: byte(valueID), Max: 255}
+	if (c.HasValue() || it.Type == "button") && (c.ID == "" || !chOK || !idOK) {
+		return Control{}, fmt.Errorf("content should be [id, channel, value id], got %s", it.Content)
+	}
 
 	switch it.Type {
 	case "range":
@@ -124,6 +148,21 @@ func parseControl(it rawItem) (Control, error) {
 			}
 			c.Options = append(c.Options, Option{label, int(value)})
 		}
+	case "toggle":
+		// A toggle is a two-option list; options can set the off and on values.
+		off, on := 0, 1
+		if len(it.Options) == 2 {
+			json.Unmarshal(it.Options[0], &off)
+			json.Unmarshal(it.Options[1], &on)
+		}
+		c.Options = []Option{{"Off", off}, {"On", on}}
+	case "button":
+		// A button has no state; pressing it sends options[0], or 1.
+		press := 1
+		if len(it.Options) == 1 {
+			json.Unmarshal(it.Options[0], &press)
+		}
+		c.Options = []Option{{"Press", press}}
 	}
 	return c, nil
 }

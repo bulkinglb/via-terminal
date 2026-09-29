@@ -493,24 +493,3 @@ func Picker(layers int, custom []string) []Keycode {
 	}
 	return list
 }
-
-// Filter ranks exact matches first, then prefixes, then substrings,
-// keeping table order within each group.
-func Filter(list []Keycode, query string) []Keycode {
-	q := strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(query)), "KC_")
-	if q == "" {
-		return list
-	}
-	var exact, prefix, rest []Keycode
-	for _, k := range list {
-		switch {
-		case k.Name == q || k.Long == q:
-			exact = append(exact, k)
-		case strings.HasPrefix(k.Name, q) || strings.HasPrefix(k.Long, q):
-			prefix = append(prefix, k)
-		case strings.Contains(k.Name, q) || strings.Contains(k.Long, q):
-			rest = append(rest, k)
-		}
-	}
-	return slices.Concat(exact, prefix, rest)
-}

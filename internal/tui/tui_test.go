@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"via-terminal/internal/defs"
+	"via-terminal/internal/keycodes"
 )
 
 func TestRender(t *testing.T) {
@@ -96,5 +97,31 @@ func TestMenuRows(t *testing.T) {
 	}
 	if swatch(0x00FF) != "\x1b[38;2;255;0;0m██\x1b[39m" || swatch(0x0000) != "\x1b[38;2;255;255;255m██\x1b[39m" {
 		t.Errorf("swatch: red %q, white %q", swatch(0x00FF), swatch(0x0000))
+	}
+}
+
+func TestPickerFilter(t *testing.T) {
+	var keys []choice
+	for _, k := range keycodes.Picker(2, nil) {
+		keys = append(keys, choice{k.Name, k.Long, int(k.Code)})
+	}
+	for query, want := range map[string]int{"kc_esc": 0x29, "space": 0x2C, "mo(1": 0x5221} {
+		p := newPicker("", keys, 0, nil)
+		p.query = query
+		p.filter()
+		if len(p.matches) == 0 || p.matches[0].value != want {
+			t.Errorf("%q should rank 0x%04X first, got %v", query, want, p.matches[:min(3, len(p.matches))])
+		}
+	}
+
+	effects := []choice{{"SOLID COLOR", "", 1}, {"BREATHING", "", 5}, {"SOLID REACTIVE", "", 34}}
+	p := newPicker("", effects, 34, nil)
+	if p.pick != 2 {
+		t.Errorf("the current value should start selected, got %d", p.pick)
+	}
+	p.query = "solid"
+	p.filter()
+	if len(p.matches) != 2 || p.pick != 0 {
+		t.Errorf("solid: %v, pick %d", p.matches, p.pick)
 	}
 }

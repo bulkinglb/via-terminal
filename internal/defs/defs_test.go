@@ -100,3 +100,41 @@ func TestMenus(t *testing.T) {
 		t.Error("short content should be an error, not a panic")
 	}
 }
+
+func TestPresetsAndLenientControls(t *testing.T) {
+	def, err := parse([]byte(`{"vendorId": "0x1", "productId": "0x1", "matrix": {"rows": 1, "cols": 1}, "layouts": {"keymap": [["0,0"]]},
+		"menus": ["qmk_backlight_rgblight", "qmk_not_a_preset", {"label": "Extra", "content": [
+			{"label": "Note", "type": "label", "content": ["Hello"]},
+			{"label": "Palette", "type": "color-palette", "content": []},
+			{"label": "Reset", "type": "button", "content": ["id_reset", 0, 9]},
+			{"label": "Clicky", "type": "toggle", "options": [2, 7], "content": ["id_clicky", 0, 3]}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(def.Menus) != 2 || def.Menus[0].Label != "Lighting" || def.Menus[1].Label != "Extra" {
+		t.Fatalf("want Lighting from the preset and Extra, got %+v", def.Menus)
+	}
+	lighting := def.Menus[0].Items
+	if len(lighting) != 8 || lighting[0].Label != "Backlight" || lighting[3].Label != "Underglow" {
+		t.Fatalf("backlight + underglow sections: %+v", lighting)
+	}
+	effect, color := lighting[5], lighting[7]
+	if effect.Channel != 2 || len(effect.Options) != 43 || effect.Options[35].Label != "RGB Test" {
+		t.Errorf("underglow effect: %+v", effect)
+	}
+	if color.Visible(map[string]int{"id_qmk_rgblight_effect": 35}) || !color.Visible(map[string]int{"id_qmk_rgblight_effect": 1}) {
+		t.Error("underglow color should hide for off and RGB Test only")
+	}
+	matrix := presets["qmk_rgb_matrix"][0].Items
+	if len(matrix[2].Options) != 45 || matrix[2].Options[24].Label != "Jellybean Raindrops" || matrix[2].Options[32].Label != "Digital Rain" {
+		t.Errorf("rgb matrix effects: %d", len(matrix[2].Options))
+	}
+
+	extra := def.Menus[1].Items
+	if extra[0].Text != "Hello" || extra[0].HasValue() || extra[1].HasValue() {
+		t.Errorf("label and unknown types: %+v", extra[:2])
+	}
+	if extra[2].Options[0].Value != 1 || extra[3].Options[0].Value != 2 || extra[3].Options[1].Value != 7 {
+		t.Errorf("button sends 1 by default, toggle takes [off, on]: %+v", extra[2:])
+	}
+}

@@ -8,9 +8,10 @@ import (
 	"strings"
 
 	"via-terminal/internal/defs"
+	"via-terminal/internal/keycodes"
 )
 
-const labelWidth, valueWidth = 30, 20
+const labelWidth, valueWidth = 30, 26
 
 // menuRow is one line on a menu tab. A color control gets two rows, hue
 // and saturation.
@@ -52,13 +53,18 @@ func (m model) updateMenu(s string) model {
 		return m.adjust(rows, -1, true)
 	case "shift+right", "L":
 		return m.adjust(rows, 1, true)
+	case "enter", "space":
+		return m.choose(rows)
 	}
 	return m
 }
 
 func (m model) clickMenu(x, y int) model {
 	rows := m.menuRows()
-	_, rowLine := m.menuLines()
+	lines, rowLine := m.menuLines()
+	if m.picker != nil {
+		return m.clickPicker(y, bodyTop+len(lines)+1)
+	}
 	for i, line := range rowLine {
 		if y-bodyTop != line {
 			continue
@@ -67,13 +73,45 @@ func (m model) clickMenu(x, y int) model {
 		label, _ := m.rowText(rows[i])
 		lt := 2 + max(labelWidth, len([]rune(label))+2) + 1
 		gt := lt + 2 + valueWidth + 1
-		if abs(x-lt) <= 1 {
+		switch {
+		case abs(x-lt) <= 1:
 			return m.adjust(rows, -1, false)
-		}
-		if abs(x-gt) <= 1 {
+		case abs(x-gt) <= 1:
 			return m.adjust(rows, 1, false)
+		case x > lt && x < gt:
+			return m.choose(rows)
 		}
 		return m
+	}
+	return m
+}
+
+// choose opens the search list for dropdowns and keycodes, and flips
+// toggles.
+func (m model) choose(rows []menuRow) model {
+	if m.row >= len(rows) {
+		return m
+	}
+	c := rows[m.row].ctl
+	if c.Type == "button" {
+		return m.setValue(c, c.Options[0].Value)
+	}
+	v, ok := m.values[c.ID]
+	if !ok {
+		return m
+	}
+	apply := func(m model, v int) model { return m.setValue(c, v) }
+	switch c.Type {
+	case "dropdown":
+		var choices []choice
+		for _, o := range c.Options {
+			choices = append(choices, choice{label: strings.ToUpper(o.Label), value: o.Value})
+		}
+		m.picker = newPicker(strings.ToUpper(c.Label), choices, v, apply)
+	case "keycode":
+		m.picker = newPicker(strings.ToUpper(c.Label), m.keycodeChoices, v, apply)
+	case "toggle":
+		return m.adjust(rows, 1, false)
 	}
 	return m
 }
@@ -99,9 +137,7 @@ func (m model) adjust(rows []menuRow, dir int, fine bool) model {
 	switch c.Type {
 	case "range":
 		v = min(max(v+step(c.Min, c.Max), c.Min), c.Max)
-	case "toggle":
-		v = 1 - min(v, 1)
-	case "dropdown":
+	case "dropdown", "toggle":
 		if len(c.Options) == 0 {
 			return m
 		}
@@ -119,7 +155,10 @@ func (m model) adjust(rows []menuRow, dir int, fine bool) model {
 	default:
 		return m
 	}
+	return m.setValue(c, v)
+}
 
+func (m model) setValue(c defs.Control, v int) model {
 	if err := m.dev.SetCustomValue(c.Channel, c.ValueID, c.Size(), v); err != nil {
 		m.status = "WRITE FAILED: " + err.Error()
 		return m
@@ -138,6 +177,14 @@ func (m model) rowText(r menuRow) (label, value string) {
 	if r.sat {
 		label += " SATURATION"
 	}
+	switch {
+	case c.Type == "button":
+		return label, "PRESS"
+	case c.Type == "label":
+		return label, strings.ToUpper(c.Text)
+	case !c.HasValue():
+		return label, "UNSUPPORTED"
+	}
 	v, ok := m.values[c.ID]
 	if !ok {
 		return label, "N/A"
@@ -145,12 +192,7 @@ func (m model) rowText(r menuRow) (label, value string) {
 	switch c.Type {
 	case "range":
 		return label, percent(v, c.Min, c.Max)
-	case "toggle":
-		if v != 0 {
-			return label, "ON"
-		}
-		return label, "OFF"
-	case "dropdown":
+	case "dropdown", "toggle":
 		for _, o := range c.Options {
 			if o.Value == v {
 				return label, strings.ToUpper(o.Label)
@@ -162,6 +204,8 @@ func (m model) rowText(r menuRow) (label, value string) {
 			return label, percent(v&0xFF, 0, 255)
 		}
 		return label, fmt.Sprintf("██ %d°", (v>>8)*360/256)
+	case "keycode":
+		return label, keycodes.Name(uint16(v), m.def.Custom)
 	}
 	return label, "UNSUPPORTED"
 }
@@ -170,6 +214,10 @@ func (m model) rowText(r menuRow) (label, value string) {
 func (m model) rowDetail(r menuRow) string {
 	v, ok := m.values[r.ctl.ID]
 	switch {
+	case r.ctl.Type == "button":
+		return "ENTER OR CLICK TO SEND"
+	case !r.ctl.HasValue():
+		return ""
 	case !ok:
 		return "the board didn't return a value for " + r.ctl.ID
 	case r.ctl.Type == "color":
@@ -214,13 +262,17 @@ func (m model) viewMenu(b *strings.Builder) {
 		lines = []string{"  NOTHING TO SET"}
 	}
 	b.WriteString(strings.Join(lines, "\n") + "\n\n")
+	if m.picker != nil {
+		m.viewPicker(b)
+		return
+	}
 	status := m.status
 	if status == "" && m.row < len(rows) {
 		label, _ := m.rowText(rows[m.row])
 		status = "> " + label + "  " + m.rowDetail(rows[m.row])
 	}
 	b.WriteString(status + "\n")
-	b.WriteString("\x1b[2m↑↓ SELECT · ←→ CHANGE · SHIFT+←→ FINE · TAB SWITCH · Q QUIT\x1b[22m")
+	b.WriteString("\x1b[2m↑↓ SELECT · ←→ CHANGE · SHIFT+←→ FINE · ENTER/CLICK LIST · TAB SWITCH · Q QUIT\x1b[22m")
 }
 
 func percent(v, lo, hi int) string {
@@ -230,9 +282,13 @@ func percent(v, lo, hi int) string {
 	return fmt.Sprintf("%d%%", ((v-lo)*100+(hi-lo)/2)/(hi-lo))
 }
 
+// center pads s to width, cutting it if it's longer so the arrows after it
+// stay where mouse clicks expect them.
 func center(s string, width int) string {
-	pad := max(0, width-len([]rune(s)))
-	return strings.Repeat(" ", pad/2) + s + strings.Repeat(" ", pad-pad/2)
+	r := []rune(s)
+	r = r[:min(len(r), width)]
+	pad := width - len(r)
+	return strings.Repeat(" ", pad/2) + string(r) + strings.Repeat(" ", pad-pad/2)
 }
 
 // swatch draws a truecolor block for a QMK color value: hue and saturation,

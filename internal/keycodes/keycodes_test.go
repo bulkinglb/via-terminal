@@ -25,14 +25,6 @@ func TestName(t *testing.T) {
 			t.Errorf("Name(0x%04X) = %q, want %q", code, got, want)
 		}
 	}
-
-	got := Filter(Picker(2, custom), "kc_esc")
-	if len(got) == 0 || got[0].Name != "ESC" {
-		t.Errorf("ESC should rank first for kc_esc, got %v", got)
-	}
-	if got := Filter(Picker(2, custom), "space"); len(got) == 0 || got[0].Code != 0x2C {
-		t.Errorf("long names should match, got %v", got)
-	}
 }
 
 func TestParseRoundTrip(t *testing.T) {
