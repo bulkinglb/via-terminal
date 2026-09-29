@@ -4,6 +4,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -34,6 +35,9 @@ type model struct {
 	values map[string]int // menu settings by control ID, absent if unreadable
 	row    int            // selected row on a menu tab
 	dirty  map[byte]bool  // channels changed since the last save
+
+	start, now time.Time // lighting preview clock
+	tickGen    int
 }
 
 // Run shows the editor until the user quits. keymap is indexed like
@@ -49,9 +53,10 @@ func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16)
 		dev:       dev,
 		layers:    layers,
 		keymap:    keymap,
-		gridLines: strings.Count(render(def.Keys, func(defs.Key) string { return "" }, -1), "\n") + 1,
+		gridLines: strings.Count(render(def.Keys, func(defs.Key) string { return "" }, nil), "\n") + 1,
 		values:    map[string]int{},
 		dirty:     map[byte]bool{},
+		start:     time.Now(),
 	}
 	for _, k := range keycodes.Picker(layers, def.Custom) {
 		m.keycodeChoices = append(m.keycodeChoices, choice{k.Name, k.Long, int(k.Code)})
@@ -83,9 +88,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch s {
 		case "tab":
-			return m.switchTab(m.tab + 1), nil
+			m = m.switchTab(m.tab + 1)
+			return m, m.tick()
 		case "shift+tab":
-			return m.switchTab(m.tab - 1), nil
+			m = m.switchTab(m.tab - 1)
+			return m, m.tick()
 		}
 		if m.tab == 0 {
 			return m.updateMapping(s), nil
@@ -96,7 +103,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mouse := msg.Mouse()
 		if mouse.Y == 1 {
 			if t := m.tabAt(mouse.X); t >= 0 {
-				return m.switchTab(t), nil
+				m = m.switchTab(t)
+				return m, m.tick()
 			}
 			return m, nil
 		}
@@ -104,6 +112,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.clickMapping(mouse.X, mouse.Y), nil
 		}
 		return m.clickMenu(mouse.X, mouse.Y), nil
+
+	case tickMsg:
+		if int(msg) != m.tickGen {
+			return m, nil
+		}
+		m.now = time.Now()
+		return m, m.tick()
 	}
 	return m, nil
 }
@@ -135,6 +150,7 @@ func (m model) switchTab(t int) model {
 	m = m.save()
 	n := len(m.def.Menus) + 1
 	m.tab, m.row, m.picker = (t%n+n)%n, 0, nil
+	m.tickGen++
 	return m
 }
 

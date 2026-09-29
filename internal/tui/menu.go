@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -273,6 +272,14 @@ func (m model) viewMenu(b *strings.Builder) {
 	}
 	b.WriteString(status + "\n")
 	b.WriteString("\x1b[2m↑↓ SELECT · ←→ CHANGE · SHIFT+←→ FINE · ENTER/CLICK LIST · TAB SWITCH · Q QUIT\x1b[22m")
+
+	if s, ok := m.rgbMatrix(); ok {
+		colors := lightFrame(m.def.Keys, s, m.now.Sub(m.start))
+		b.WriteString("\n\n" + render(m.def.Keys, func(defs.Key) string { return "" }, func(i int) string { return colors[i] }))
+		if !simulated(s.effect) {
+			b.WriteString("\n\x1b[2mPREVIEW SHOWS THE PLAIN COLOR, THIS EFFECT ISN'T SIMULATED\x1b[22m")
+		}
+	}
 }
 
 func percent(v, lo, hi int) string {
@@ -294,10 +301,6 @@ func center(s string, width int) string {
 // swatch draws a truecolor block for a QMK color value: hue and saturation,
 // each 0-255, at full brightness.
 func swatch(v int) string {
-	h := float64(v>>8) / 256 * 6
-	c := float64(v&0xFF) / 255
-	x := c * (1 - math.Abs(math.Mod(h, 2)-1))
-	rgb := [6][3]float64{{c, x, 0}, {x, c, 0}, {0, c, x}, {0, x, c}, {x, 0, c}, {c, 0, x}}[int(h)]
-	ch := func(f float64) int { return int((f + 1 - c) * 255) }
-	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm██\x1b[39m", ch(rgb[0]), ch(rgb[1]), ch(rgb[2]))
+	r, g, b := hsv(float64(v>>8)/256, float64(v&0xFF)/255, 1)
+	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm██\x1b[39m", r, g, b)
 }

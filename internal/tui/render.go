@@ -68,14 +68,15 @@ func keyAt(keys []defs.Key, x, y int) int {
 	return -1
 }
 
-// render draws the keys as a box-drawing grid and shows key sel in reverse
-// video (-1 for none). Legend lines longer than a key wrap inside it.
+// render draws the keys as a box-drawing grid. style returns an escape
+// sequence for the inside of key i, like reverse video or a background
+// color; it may be nil. Legend lines longer than a key wrap inside it.
 //
 // Every character sits on a lattice point between cells; a point gets a
 // border segment wherever the cells on either side belong to different keys.
 // That gives shared borders, the right junction characters and L-shaped ISO
 // Enter without special cases.
-func render(keys []defs.Key, legend func(defs.Key) string, sel int) string {
+func render(keys []defs.Key, legend func(defs.Key) string, style func(i int) string) string {
 	rects := cellRects(keys)
 	var width, height int
 	var owner [][]int
@@ -143,17 +144,23 @@ func render(keys []defs.Key, legend func(defs.Key) string, sel int) string {
 	lines := make([]string, len(grid))
 	for y, row := range grid {
 		var b strings.Builder
-		on := false
+		current := ""
 		for x, c := range row {
-			s := sel + 1
-			inside := sel >= 0 && at(x-1, y-1) == s && at(x, y-1) == s && at(x-1, y) == s && at(x, y) == s
-			if inside && !on {
-				b.WriteString("\x1b[7m")
-			} else if !inside && on {
-				b.WriteString("\x1b[27m")
+			want := ""
+			if o := at(x, y); style != nil && o != 0 && at(x-1, y-1) == o && at(x, y-1) == o && at(x-1, y) == o {
+				want = style(o - 1)
 			}
-			on = inside
+			if want != current {
+				if current != "" {
+					b.WriteString("\x1b[0m")
+				}
+				b.WriteString(want)
+				current = want
+			}
 			b.WriteRune(c)
+		}
+		if current != "" {
+			b.WriteString("\x1b[0m")
 		}
 		lines[y] = strings.TrimRight(b.String(), " ")
 	}

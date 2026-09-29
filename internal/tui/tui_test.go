@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"via-terminal/internal/defs"
 	"via-terminal/internal/keycodes"
@@ -20,7 +21,7 @@ func TestRender(t *testing.T) {
 	got := render(keys, func(defs.Key) string {
 		i++
 		return names[i-1]
-	}, -1)
+	}, nil)
 	want := strings.Join([]string{
 		"┌─────┬─────┐",
 		"│  a  │  b  │",
@@ -123,5 +124,35 @@ func TestPickerFilter(t *testing.T) {
 	p.filter()
 	if len(p.matches) != 2 || p.pick != 0 {
 		t.Errorf("solid: %v, pick %d", p.matches, p.pick)
+	}
+}
+
+func TestLightFrame(t *testing.T) {
+	def, err := defs.Find(0x342D, 0xE4C2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := func(effect string, at time.Duration) []string {
+		return lightFrame(def.Keys, rgbSettings{effect: effect, hue: 0, sat: 255, val: 255, speed: 128}, at)
+	}
+	for _, c := range frame("Solid Color", time.Second) {
+		if c != "\x1b[48;2;255;0;0m" {
+			t.Fatalf("solid red should color every key red, got %q", c)
+		}
+	}
+	for _, c := range frame("All Off", time.Second) {
+		if c != "\x1b[48;2;0;0;0m" {
+			t.Fatalf("all off should be black, got %q", c)
+		}
+	}
+	cycle := frame("Cycle Left Right", time.Second)
+	if cycle[0] == cycle[13] {
+		t.Error("cycle left right should color the left and right of the board differently")
+	}
+	if later := frame("Cycle Left Right", 1500*time.Millisecond); later[0] == cycle[0] {
+		t.Error("the animation should move over time")
+	}
+	if effectName("Pinwheel Sat.") != effectName("Band Pinwheel Sat") || simulated("Raindrops") || !simulated("Band Val") {
+		t.Error("VIA and QMK effect names should match, random effects aren't simulated")
 	}
 }

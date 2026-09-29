@@ -102,7 +102,12 @@ func (m model) legend(k defs.Key) string {
 
 func (m model) viewMapping(b *strings.Builder) {
 	b.WriteString(m.layerLine() + "\n\n")
-	b.WriteString(render(m.def.Keys, m.legend, m.sel))
+	b.WriteString(render(m.def.Keys, m.legend, func(i int) string {
+		if i == m.sel {
+			return "\x1b[7m"
+		}
+		return ""
+	}))
 	b.WriteString("\n\n")
 
 	if m.picker != nil {
