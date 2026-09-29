@@ -2,8 +2,10 @@
 package keycodes
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -281,52 +283,185 @@ func series() []Keycode {
 	return list
 }
 
-// Name turns a v12 keycode into a QMK-style name. custom holds the
-// definition's customKeycodes, which VIA maps to QK_KB_0 onwards.
+// layerFns are the layer keycodes from 0x5200 on, 32 codes each.
+var layerFns = [...]string{"TO", "MO", "DF", "TG", "OSL", "OSM", "TT", "PDF"}
+
+// numbered are the ranges QMK names PREFIX_n.
+var numbered = []struct {
+	prefix      string
+	base, count uint16
+}{
+	{"MC_", 0x7700, 0x80},
+	{"QK_KB_", 0x7E00, 0x40},
+	{"QK_USER_", 0x7E40, 0x1C0},
+}
+
+// Name turns a v12 keycode into a QMK-style name that Parse reads back.
+// custom holds the definition's customKeycodes, which VIA maps to QK_KB_0
+// onwards. Codes without a meaningful name come out as hex.
 func Name(code uint16, custom []string) string {
-	basic := func(c uint16) string { return Name(c&0xFF, nil) }
-	switch {
-	case code <= 0xFF:
-		if name, ok := names[code]; ok {
-			return name
+	if name, ok := names[code]; ok {
+		return name
+	}
+	if i := int(code) - 0x7E00; i >= 0 && i < len(custom) {
+		return custom[i]
+	}
+	for _, r := range numbered {
+		if code >= r.base && code < r.base+r.count {
+			return fmt.Sprintf("%s%d", r.prefix, code-r.base)
 		}
-	case code < 0x2000:
+	}
+	basic := func(c uint16) string { return Name(c&0xFF, nil) }
+	mods := func(mask uint16) string { return strings.Join(modNames(mask), "|") }
+	switch {
+	case code >= 0x0100 && code < 0x2000 && code>>8&0xF != 0:
 		name := basic(code)
-		mods := modNames(code >> 8)
-		for i := len(mods) - 1; i >= 0; i-- {
-			name = mods[i] + "(" + name + ")"
+		for _, mod := range slices.Backward(modNames(code >> 8)) {
+			name = mod + "(" + name + ")"
 		}
 		return name
-	case code < 0x4000:
-		return fmt.Sprintf("MT(%s,%s)", strings.Join(modNames(code>>8), "|"), basic(code))
-	case code < 0x5000:
+	case code >= 0x2000 && code < 0x4000 && code>>8&0xF != 0:
+		return fmt.Sprintf("MT(%s,%s)", mods(code>>8), basic(code))
+	case code >= 0x4000 && code < 0x5000:
 		return fmt.Sprintf("LT(%d,%s)", code>>8&0xF, basic(code))
-	case code < 0x5200:
-		return fmt.Sprintf("LM(%d,%s)", code>>5&0xF, strings.Join(modNames(code), "|"))
-	case code < 0x5300:
-		fn := [...]string{"TO", "MO", "DF", "TG", "OSL", "OSM", "TT", "PDF"}[(code-0x5200)>>5]
-		if fn == "OSM" {
-			return "OSM(" + strings.Join(modNames(code), "|") + ")"
+	case code >= 0x5000 && code < 0x5200 && code&0xF != 0:
+		return fmt.Sprintf("LM(%d,%s)", code>>5&0xF, mods(code))
+	case code >= 0x5200 && code < 0x5300:
+		fn := layerFns[(code-0x5200)>>5]
+		if fn != "OSM" {
+			return fmt.Sprintf("%s(%d)", fn, code&0x1F)
 		}
-		return fmt.Sprintf("%s(%d)", fn, code&0x1F)
+		if code&0xF != 0 {
+			return "OSM(" + mods(code) + ")"
+		}
 	case code >= 0x5700 && code < 0x5800:
 		return fmt.Sprintf("TD(%d)", code&0xFF)
-	case code >= 0x7700 && code < 0x7780:
-		return fmt.Sprintf("MC_%d", code&0x7F)
-	case code >= 0x7E00 && code < 0x7E40:
-		if i := int(code - 0x7E00); i < len(custom) {
-			return custom[i]
-		}
-		return fmt.Sprintf("QK_KB_%d", code-0x7E00)
-	case code >= 0x7E40 && code < 0x8000:
-		return fmt.Sprintf("QK_USER_%d", code-0x7E40)
-	default:
-		if name, ok := names[code]; ok {
-			return name
-		}
 	}
 	return fmt.Sprintf("0x%04X", code)
 }
+
+var byName = func() map[string]uint16 {
+	m := make(map[string]uint16, 2*len(table))
+	for _, k := range table {
+		if k.Long != "" {
+			m[k.Long] = k.Code
+		}
+	}
+	// Short names win if one collides with another key's long name.
+	for _, k := range table {
+		m[k.Name] = k.Code
+	}
+	return m
+}()
+
+// Parse reads a keycode the way Name writes it. It ignores case, allows a
+// KC_ prefix and long names like SPACE, and takes hex such as 0x7E05.
+func Parse(s string, custom []string) (uint16, error) {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	for i, name := range custom {
+		if strings.ToUpper(name) == s {
+			return 0x7E00 + uint16(i), nil
+		}
+	}
+	if code, ok := byName[strings.TrimPrefix(s, "KC_")]; ok {
+		return code, nil
+	}
+	if hex, ok := strings.CutPrefix(s, "0X"); ok {
+		if code, err := strconv.ParseUint(hex, 16, 16); err == nil {
+			return uint16(code), nil
+		}
+	}
+	for _, r := range numbered {
+		if n, ok := strings.CutPrefix(s, r.prefix); ok {
+			if i, err := strconv.Atoi(n); err == nil && i >= 0 && i < int(r.count) {
+				return r.base + uint16(i), nil
+			}
+		}
+	}
+
+	unknown := fmt.Errorf("unknown keycode %q", s)
+	fn, args, open := strings.Cut(s, "(")
+	args, closed := strings.CutSuffix(args, ")")
+	if !open || !closed {
+		return 0, unknown
+	}
+	first, second, _ := strings.Cut(args, ",")
+	switch fn {
+	case "TD":
+		n, err := number(args, 0xFF)
+		return 0x5700 | n, err
+	case "OSM":
+		mask, err := parseMods(args)
+		return 0x52A0 | mask, err
+	case "LM":
+		layer, err := number(first, 0xF)
+		mask, merr := parseMods(second)
+		return 0x5000 | layer<<5 | mask, cmp.Or(err, merr)
+	case "LT":
+		layer, err := number(first, 0xF)
+		kc, kerr := parseBasic(second)
+		return 0x4000 | layer<<8 | kc, cmp.Or(err, kerr)
+	case "MT":
+		mask, err := parseMods(first)
+		kc, kerr := parseBasic(second)
+		return 0x2000 | mask<<8 | kc, cmp.Or(err, kerr)
+	}
+	if i := slices.Index(layerFns[:], fn); i >= 0 {
+		layer, err := number(args, 0x1F)
+		return 0x5200 + uint16(i)<<5 | layer, err
+	}
+
+	// Modifier wrappers such as LSFT(A) or LCTL(LSFT(A)).
+	mask, err := parseMods(fn)
+	if err != nil {
+		return 0, unknown
+	}
+	inner, err := Parse(args, nil)
+	if err != nil {
+		return 0, err
+	}
+	if inner >= 0x2000 || inner >= 0x0100 && inner>>12 != mask>>4 {
+		return 0, fmt.Errorf("%q: modifiers must wrap a basic key and be all left or all right", s)
+	}
+	return inner | mask<<8, nil
+}
+
+func number(s string, max uint16) (uint16, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 0 || n > int(max) {
+		return 0, fmt.Errorf("%q: want a number from 0 to %d", s, max)
+	}
+	return uint16(n), nil
+}
+
+func parseBasic(s string) (uint16, error) {
+	code, err := Parse(s, nil)
+	if err == nil && code > 0xFF {
+		err = fmt.Errorf("%q: only basic keys fit here", s)
+	}
+	return code, err
+}
+
+// parseMods reads "LCTL|LSFT" back into QMK's 5-bit mod mask.
+func parseMods(s string) (uint16, error) {
+	var mask uint16
+	side := ""
+	for _, name := range strings.Split(s, "|") {
+		name = strings.TrimSpace(name)
+		i := slices.Index(modList, strings.TrimLeft(name, "LR"))
+		if len(name) != 4 || i < 0 || side != "" && side != name[:1] {
+			return 0, fmt.Errorf("%q: want mods like LCTL|LSFT, all left or all right", s)
+		}
+		side = name[:1]
+		mask |= 1 << i
+	}
+	if side == "R" {
+		mask |= 0x10
+	}
+	return mask, nil
+}
+
+var modList = []string{"CTL", "SFT", "ALT", "GUI"}
 
 // modNames decodes QMK's 5-bit mod mask: ctrl, shift, alt, gui, and a fifth
 // bit that makes all of them right-hand.
@@ -336,7 +471,7 @@ func modNames(mask uint16) []string {
 		side = "R"
 	}
 	var names []string
-	for i, mod := range []string{"CTL", "SFT", "ALT", "GUI"} {
+	for i, mod := range modList {
 		if mask&(1<<i) != 0 {
 			names = append(names, side+mod)
 		}

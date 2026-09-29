@@ -18,6 +18,7 @@ type Definition struct {
 	VendorID, ProductID uint16
 	Rows, Cols          int
 	Keys                []Key
+	Encoders            int      // rotary encoders, from "eN" key legends
 	Custom              []string // customKeycodes names, QK_KB_0 onwards
 }
 
@@ -102,7 +103,7 @@ func parse(data []byte) (Definition, error) {
 	if err != nil {
 		return Definition{}, fmt.Errorf("productId: %w", err)
 	}
-	keys, err := parseKLE(raw.Layouts.Keymap)
+	keys, encoders, err := parseKLE(raw.Layouts.Keymap)
 	if err != nil {
 		return Definition{}, err
 	}
@@ -115,15 +116,17 @@ func parse(data []byte) (Definition, error) {
 	for _, c := range raw.CustomKeycodes {
 		custom = append(custom, c.Name)
 	}
-	return Definition{raw.Name, uint16(vid), uint16(pid), raw.Matrix.Rows, raw.Matrix.Cols, keys, custom}, nil
+	return Definition{raw.Name, uint16(vid), uint16(pid), raw.Matrix.Rows, raw.Matrix.Cols, keys, encoders, custom}, nil
 }
 
 // parseKLE walks keyboard-layout-editor rows: property objects move the
-// cursor and size the next key, strings are keys with "row,col" in legend 0
-// and an optional layout option "group,choice" in legend 3.
-func parseKLE(rows [][]json.RawMessage) ([]Key, error) {
+// cursor and size the next key, strings are keys with "row,col" in legend 0,
+// an optional layout option "group,choice" in legend 3 and an optional
+// encoder "eN" in legend 9. It returns the keys and the encoder count.
+func parseKLE(rows [][]json.RawMessage) ([]Key, int, error) {
 	type props struct{ X, Y, W, H, X2, Y2, W2, H2 float64 }
 	var keys []Key
+	var encoders int
 	y := 0.0
 	for _, row := range rows {
 		x := 0.0
@@ -135,7 +138,7 @@ func parseKLE(rows [][]json.RawMessage) ([]Key, error) {
 				// sizes carry over while x/y are fresh offsets each time.
 				p.X, p.Y = 0, 0
 				if err := json.Unmarshal(item, &p); err != nil {
-					return nil, fmt.Errorf("keymap item %s: %w", item, err)
+					return nil, 0, fmt.Errorf("keymap item %s: %w", item, err)
 				}
 				x += p.X
 				y += p.Y
@@ -145,7 +148,13 @@ func parseKLE(rows [][]json.RawMessage) ([]Key, error) {
 			labels := strings.Split(legend, "\n")
 			k := Key{X: x, Y: y, W: p.W, H: p.H, X2: p.X2, Y2: p.Y2, W2: cmp.Or(p.W2, p.W), H2: cmp.Or(p.H2, p.H)}
 			if _, err := fmt.Sscanf(labels[0], "%d,%d", &k.Row, &k.Col); err != nil {
-				return nil, fmt.Errorf("key legend %q: want \"row,col\"", legend)
+				return nil, 0, fmt.Errorf("key legend %q: want \"row,col\"", legend)
+			}
+			var encoder int
+			if len(labels) > 9 && labels[9] != "" {
+				if _, err := fmt.Sscanf(labels[9], "e%d", &encoder); err == nil {
+					encoders = max(encoders, encoder+1)
+				}
 			}
 			var group, choice int
 			if len(labels) > 3 && labels[3] != "" {
@@ -159,5 +168,5 @@ func parseKLE(rows [][]json.RawMessage) ([]Key, error) {
 		}
 		y++
 	}
-	return keys, nil
+	return keys, encoders, nil
 }

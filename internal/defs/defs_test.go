@@ -16,9 +16,9 @@ func TestParseKLE(t *testing.T) {
 		{json.RawMessage(`{"w": 1.5}`), json.RawMessage(`"2,0"`), json.RawMessage(`{"x": 0.25, "w": 1.5, "h": 2, "h2": 1, "x2": -0.25}`), json.RawMessage(`"3,13"`), json.RawMessage(`{"x": 0.5}`), json.RawMessage(`"2,14"`)},
 		{json.RawMessage(`{"y": 0.25}`), json.RawMessage(`"4,0\n\n\n0,1"`), json.RawMessage(`"4,1\n\n\n0,0"`)},
 	}
-	keys, err := parseKLE(rows)
-	if err != nil {
-		t.Fatal(err)
+	keys, encoders, err := parseKLE(rows)
+	if err != nil || encoders != 0 {
+		t.Fatal(encoders, err)
 	}
 	want := []Key{
 		{Row: 2, Col: 0, X: 0, Y: 0, W: 1.5, H: 1, W2: 1.5, H2: 1},
@@ -43,7 +43,7 @@ func TestFind(t *testing.T) {
 	}
 
 	def, err := Find(0x342D, 0xE4C2)
-	if err != nil || def.Rows != 6 || def.Cols != 15 {
+	if err != nil || def.Rows != 6 || def.Cols != 15 || def.Encoders != 1 {
 		t.Fatalf("bundled M1 V5 ISO: %+v, %v", def, err)
 	}
 
