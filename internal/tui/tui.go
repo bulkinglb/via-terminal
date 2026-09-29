@@ -1,12 +1,16 @@
-package main
+// Package tui is the interactive keymap editor.
+package tui
 
 import (
 	"fmt"
 	"math"
-	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"via-terminal/internal/defs"
+	"via-terminal/internal/keycodes"
+	"via-terminal/internal/via"
 )
 
 // Lines above the keyboard; mouse hit-testing counts on it.
@@ -15,9 +19,8 @@ const gridTop = 3
 const pickRows = 10
 
 type model struct {
-	def       definition
-	dev       *os.File
-	version   uint16
+	def       defs.Definition
+	dev       *via.Device
 	layers    int
 	keymap    []uint16
 	gridLines int
@@ -28,26 +31,32 @@ type model struct {
 
 	picking bool
 	query   string
-	all     []keycode
-	matches []keycode
+	all     []keycodes.Keycode
+	matches []keycodes.Keycode
 	pick    int
 }
 
-func newModel(def definition, dev *os.File, version uint16, layers int, keymap []uint16) model {
+// Run shows the editor until the user quits. keymap is indexed like
+// via.Device.Keymap returns it and is updated in place on every write.
+func Run(def defs.Definition, dev *via.Device, layers int, keymap []uint16) error {
+	_, err := tea.NewProgram(newModel(def, dev, layers, keymap)).Run()
+	return err
+}
+
+func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16) model {
 	return model{
 		def:       def,
 		dev:       dev,
-		version:   version,
 		layers:    layers,
 		keymap:    keymap,
-		gridLines: strings.Count(render(def.Keys, func(key) string { return "" }, -1), "\n") + 1,
-		all:       pickerKeycodes(layers, def.Custom),
+		gridLines: strings.Count(render(def.Keys, func(defs.Key) string { return "" }, -1), "\n") + 1,
+		all:       keycodes.Picker(layers, def.Custom),
 	}
 }
 
 func (m model) Init() tea.Cmd { return nil }
 
-func (m model) index(layer int, k key) int {
+func (m model) index(layer int, k defs.Key) int {
 	return (layer*m.def.Rows+k.Row)*m.def.Cols + k.Col
 }
 
@@ -135,19 +144,19 @@ func (m model) updatePicker(msg tea.KeyPressMsg) model {
 	default:
 		m.query += msg.Text
 	}
-	m.matches, m.pick = filterKeycodes(m.all, m.query), 0
+	m.matches, m.pick = keycodes.Filter(m.all, m.query), 0
 	return m
 }
 
-func (m model) assign(kc keycode) model {
+func (m model) assign(kc keycodes.Keycode) model {
 	m.picking = false
 	k := m.def.Keys[m.sel]
-	if err := setKeycode(m.dev, m.layer, k.Row, k.Col, kc.code); err != nil {
+	if err := m.dev.SetKeycode(m.layer, k.Row, k.Col, kc.Code); err != nil {
 		m.status = "WRITE FAILED: " + err.Error()
 		return m
 	}
-	m.keymap[m.index(m.layer, k)] = kc.code
-	m.status = fmt.Sprintf("SET %d,%d ON LAYER %d TO %s", k.Row, k.Col, m.layer, keyName(kc.code, m.def.Custom))
+	m.keymap[m.index(m.layer, k)] = kc.Code
+	m.status = fmt.Sprintf("SET %d,%d ON LAYER %d TO %s", k.Row, k.Col, m.layer, keycodes.Name(kc.Code, m.def.Custom))
 	return m
 }
 
@@ -162,7 +171,7 @@ func (m model) layerLine() string {
 
 // legend shows the layer 0 key above the current mapping on higher layers,
 // so it stays clear which physical key is being changed.
-func (m model) legend(k key) string {
+func (m model) legend(k defs.Key) string {
 	label := func(code uint16) string {
 		switch code {
 		case 0x0000:
@@ -170,7 +179,7 @@ func (m model) legend(k key) string {
 		case 0x0001:
 			return "▽"
 		}
-		return keyName(code, m.def.Custom)
+		return keycodes.Name(code, m.def.Custom)
 	}
 	current := label(m.keymap[m.index(m.layer, k)])
 	if m.layer == 0 {
@@ -181,7 +190,7 @@ func (m model) legend(k key) string {
 
 func (m model) View() tea.View {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\x1b[1m◆ %s\x1b[22m - VIA v%d\n%s\n\n", strings.ToUpper(m.def.Name), m.version, m.layerLine())
+	fmt.Fprintf(&b, "\x1b[1m◆ %s\x1b[22m - VIA v%d\n%s\n\n", strings.ToUpper(m.def.Name), m.dev.Version, m.layerLine())
 	b.WriteString(render(m.def.Keys, m.legend, m.sel))
 	b.WriteString("\n\n")
 
@@ -190,7 +199,7 @@ func (m model) View() tea.View {
 		fmt.Fprintf(&b, "> REMAP %d,%d ON LAYER %d: %s_\n", k.Row, k.Col, m.layer, m.query)
 		start, end := m.pickWindow()
 		for i := start; i < end; i++ {
-			line := fmt.Sprintf("  %-12s %s", m.matches[i].name, m.matches[i].long)
+			line := fmt.Sprintf("  %-12s %s", m.matches[i].Name, m.matches[i].Long)
 			if i == m.pick {
 				line = "\x1b[7m" + line + "\x1b[27m"
 			}
@@ -198,7 +207,7 @@ func (m model) View() tea.View {
 		}
 		b.WriteString("\x1b[2mTYPE TO SEARCH · ENTER/CLICK ASSIGN · ESC CANCEL\x1b[22m")
 	} else {
-		fmt.Fprintf(&b, "> %d,%d  %s\n%s\n", k.Row, k.Col, keyName(m.keymap[m.index(m.layer, k)], m.def.Custom), m.status)
+		fmt.Fprintf(&b, "> %d,%d  %s\n%s\n", k.Row, k.Col, keycodes.Name(m.keymap[m.index(m.layer, k)], m.def.Custom), m.status)
 		b.WriteString("\x1b[2mARROWS MOVE · ENTER/CLICK REMAP · [ ] OR 0-9 LAYER · Q QUIT\x1b[22m")
 	}
 
@@ -211,7 +220,7 @@ func (m model) View() tea.View {
 // nearestKey steps from key i in direction dx,dy to the closest key whose
 // center lies past that edge of key i. Off-axis distance counts double so
 // moves stay in their row or column.
-func nearestKey(keys []key, i, dx, dy int) int {
+func nearestKey(keys []defs.Key, i, dx, dy int) int {
 	k := keys[i]
 	cx, cy := k.X+k.W/2, k.Y+k.H/2
 	best, bestScore := i, math.Inf(1)

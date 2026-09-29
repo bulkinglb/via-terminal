@@ -1,8 +1,10 @@
-package main
+package tui
 
 import (
 	"math"
 	"strings"
+
+	"via-terminal/internal/defs"
 )
 
 // Cells per 1u. Neighbouring keys share a border, so a 1u key is unitW+1
@@ -35,7 +37,7 @@ type rect struct{ x0, y0, x1, y1 int }
 
 // cellRects converts each key's main and second KLE rectangle to character
 // cells, shifted so the board starts at 0,0.
-func cellRects(keys []key) [][2]rect {
+func cellRects(keys []defs.Key) [][2]rect {
 	minX, minY := math.Inf(1), math.Inf(1)
 	for _, k := range keys {
 		minX = min(minX, k.X, k.X+k.X2)
@@ -55,7 +57,7 @@ func cellRects(keys []key) [][2]rect {
 }
 
 // keyAt returns the index of the key drawn at character x,y, or -1.
-func keyAt(keys []key, x, y int) int {
+func keyAt(keys []defs.Key, x, y int) int {
 	for i, rs := range cellRects(keys) {
 		for _, r := range rs {
 			if x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1 {
@@ -67,11 +69,13 @@ func keyAt(keys []key, x, y int) int {
 }
 
 // render draws the keys as a box-drawing grid and shows key sel in reverse
-// video (-1 for none). Legend lines longer than a key wrap inside it. Every character sits on a lattice point between
-// cells; a point gets a border segment wherever the cells on either side
-// belong to different keys. That gives shared borders, the right junction
-// characters and L-shaped ISO Enter without special cases.
-func render(keys []key, legend func(key) string, sel int) string {
+// video (-1 for none). Legend lines longer than a key wrap inside it.
+//
+// Every character sits on a lattice point between cells; a point gets a
+// border segment wherever the cells on either side belong to different keys.
+// That gives shared borders, the right junction characters and L-shaped ISO
+// Enter without special cases.
+func render(keys []defs.Key, legend func(defs.Key) string, sel int) string {
 	rects := cellRects(keys)
 	var width, height int
 	var owner [][]int

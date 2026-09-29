@@ -1,4 +1,5 @@
-package main
+// Package keycodes names QMK keycodes as VIA protocol v12 numbers them.
+package keycodes
 
 import (
 	"fmt"
@@ -6,18 +7,18 @@ import (
 	"strings"
 )
 
-// keycode names follow QMK's shortest alias without the KC_ prefix. long is
+// Keycode names follow QMK's shortest alias without the KC_ prefix. Long is
 // the spelled-out name, only there so the picker finds "space" or "shift".
-type keycode struct {
-	code       uint16
-	name, long string
+type Keycode struct {
+	Code       uint16
+	Name, Long string
 }
 
-// keycodes holds the VIA protocol v12 numbering (QMK 0.19+), checked against
+// table holds the VIA protocol v12 numbering (QMK 0.19+), checked against
 // QMK's data/constants/keycodes specs. 0x7820-0x782A use the RGB_* names
 // because VIA-era firmware drives the RGB matrix with them; newer QMK calls
 // them UG_* and moved matrix control to RM_*.
-var keycodes = slices.Concat(seriesKeycodes(), []keycode{
+var table = slices.Concat(series(), []Keycode{
 	{0x0028, "ENT", "ENTER"},
 	{0x0029, "ESC", "ESCAPE"},
 	{0x002A, "BSPC", "BACKSPACE"},
@@ -254,39 +255,39 @@ var keycodes = slices.Concat(seriesKeycodes(), []keycode{
 	{0x7C7B, "QK_LLCK", "LAYER_LOCK"},
 })
 
-var keycodeNames = func() map[uint16]string {
-	names := make(map[uint16]string, len(keycodes))
-	for _, k := range keycodes {
-		names[k.code] = k.name
+var names = func() map[uint16]string {
+	m := make(map[uint16]string, len(table))
+	for _, k := range table {
+		m[k.Code] = k.Name
 	}
-	return names
+	return m
 }()
 
-func seriesKeycodes() []keycode {
-	list := []keycode{{0x0000, "NO", ""}, {0x0001, "TRNS", "TRANSPARENT"}}
+func series() []Keycode {
+	list := []Keycode{{0x0000, "NO", ""}, {0x0001, "TRNS", "TRANSPARENT"}}
 	for i := range 26 {
-		list = append(list, keycode{0x04 + uint16(i), string(rune('A' + i)), ""})
+		list = append(list, Keycode{0x04 + uint16(i), string(rune('A' + i)), ""})
 	}
 	for i := range 10 {
-		list = append(list, keycode{0x1E + uint16(i), string("1234567890"[i]), ""})
+		list = append(list, Keycode{0x1E + uint16(i), string("1234567890"[i]), ""})
 	}
 	for i := range 24 {
 		code := 0x3A + uint16(i)
 		if i >= 12 {
 			code = 0x68 + uint16(i-12)
 		}
-		list = append(list, keycode{code, fmt.Sprintf("F%d", i+1), ""})
+		list = append(list, Keycode{code, fmt.Sprintf("F%d", i+1), ""})
 	}
 	return list
 }
 
-// keyName turns a v12 keycode into a QMK-style name. custom holds the
+// Name turns a v12 keycode into a QMK-style name. custom holds the
 // definition's customKeycodes, which VIA maps to QK_KB_0 onwards.
-func keyName(code uint16, custom []string) string {
-	basic := func(c uint16) string { return keyName(c&0xFF, nil) }
+func Name(code uint16, custom []string) string {
+	basic := func(c uint16) string { return Name(c&0xFF, nil) }
 	switch {
 	case code <= 0xFF:
-		if name, ok := keycodeNames[code]; ok {
+		if name, ok := names[code]; ok {
 			return name
 		}
 	case code < 0x2000:
@@ -320,7 +321,7 @@ func keyName(code uint16, custom []string) string {
 	case code >= 0x7E40 && code < 0x8000:
 		return fmt.Sprintf("QK_USER_%d", code-0x7E40)
 	default:
-		if name, ok := keycodeNames[code]; ok {
+		if name, ok := names[code]; ok {
 			return name
 		}
 	}
@@ -343,36 +344,36 @@ func modNames(mask uint16) []string {
 	return names
 }
 
-// pickerKeycodes is everything the remap picker offers: the named table,
+// Picker is everything the remap picker offers: the named table,
 // layer switches for the board's layers and its custom keycodes.
-func pickerKeycodes(layers int, custom []string) []keycode {
-	list := slices.Clone(keycodes)
+func Picker(layers int, custom []string) []Keycode {
+	list := slices.Clone(table)
 	for _, base := range []uint16{0x5220, 0x5260, 0x52C0, 0x5280, 0x5200, 0x5240} {
 		for layer := range layers {
-			list = append(list, keycode{base | uint16(layer), keyName(base|uint16(layer), nil), ""})
+			list = append(list, Keycode{base | uint16(layer), Name(base|uint16(layer), nil), ""})
 		}
 	}
 	for i, name := range custom {
-		list = append(list, keycode{0x7E00 + uint16(i), strings.ToUpper(name), ""})
+		list = append(list, Keycode{0x7E00 + uint16(i), strings.ToUpper(name), ""})
 	}
 	return list
 }
 
-// filterKeycodes ranks exact matches first, then prefixes, then substrings,
+// Filter ranks exact matches first, then prefixes, then substrings,
 // keeping table order within each group.
-func filterKeycodes(list []keycode, query string) []keycode {
+func Filter(list []Keycode, query string) []Keycode {
 	q := strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(query)), "KC_")
 	if q == "" {
 		return list
 	}
-	var exact, prefix, rest []keycode
+	var exact, prefix, rest []Keycode
 	for _, k := range list {
 		switch {
-		case k.name == q || k.long == q:
+		case k.Name == q || k.Long == q:
 			exact = append(exact, k)
-		case strings.HasPrefix(k.name, q) || strings.HasPrefix(k.long, q):
+		case strings.HasPrefix(k.Name, q) || strings.HasPrefix(k.Long, q):
 			prefix = append(prefix, k)
-		case strings.Contains(k.name, q) || strings.Contains(k.long, q):
+		case strings.Contains(k.Name, q) || strings.Contains(k.Long, q):
 			rest = append(rest, k)
 		}
 	}
