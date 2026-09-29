@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"via-terminal/internal/defs"
-	"via-terminal/internal/keycodes"
+	"github.com/bulkinglb/via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
 )
 
 func TestRender(t *testing.T) {

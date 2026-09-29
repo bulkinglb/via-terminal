@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"via-terminal/internal/defs"
-	"via-terminal/internal/keycodes"
+	"github.com/bulkinglb/via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
 )
 
 const labelWidth, valueWidth = 30, 26

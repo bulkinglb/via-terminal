@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"via-terminal/internal/macros"
+	"github.com/bulkinglb/via-terminal/internal/macros"
 )
 
 // macroState is shared between model copies; the buffer is only read when

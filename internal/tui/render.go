@@ -4,7 +4,7 @@ import (
 	"math"
 	"strings"
 
-	"via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/defs"
 )
 
 // Cells per 1u. Neighbouring keys share a border, so a 1u key is unitW+1

@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"via-terminal/internal/keycodes"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
 )
 
 // newReference builds the keycode reference: how to read keycodes that take

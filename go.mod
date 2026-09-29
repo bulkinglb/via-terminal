@@ -1,4 +1,4 @@
-module via-terminal
+module github.com/bulkinglb/via-terminal
 
 go 1.27.1
 

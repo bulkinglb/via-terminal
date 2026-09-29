@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"via-terminal/internal/defs"
-	"via-terminal/internal/keycodes"
-	"via-terminal/internal/macros"
+	"github.com/bulkinglb/via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
+	"github.com/bulkinglb/via-terminal/internal/macros"
 )
 
 // Backup is everything a backup file holds. Keys and Encoders are laid out

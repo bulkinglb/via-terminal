@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"via-terminal/internal/defs"
-	"via-terminal/internal/keymap"
-	"via-terminal/internal/macros"
-	"via-terminal/internal/tui"
-	"via-terminal/internal/via"
+	"github.com/bulkinglb/via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/keymap"
+	"github.com/bulkinglb/via-terminal/internal/macros"
+	"github.com/bulkinglb/via-terminal/internal/tui"
+	"github.com/bulkinglb/via-terminal/internal/via"
 )
 
 const usage = `usage: via-terminal [--def board.json] [command]

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"via-terminal/internal/keycodes"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
 )
 
 // The buffer holds the macros one after another, each ending in a zero byte.

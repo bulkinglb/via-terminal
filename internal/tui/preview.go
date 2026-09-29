@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/defs"
 )
 
 // The lighting preview recomputes RGB matrix effects on the key grid, since

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/defs"
 )
 
 func TestRoundTrip(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"math"
 	"strings"
 
-	"via-terminal/internal/defs"
-	"via-terminal/internal/keycodes"
+	"github.com/bulkinglb/via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
 )
 
 // The keyboard sits below the layer switcher and a blank line.

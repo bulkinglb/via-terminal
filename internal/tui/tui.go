@@ -8,9 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"via-terminal/internal/defs"
-	"via-terminal/internal/keycodes"
-	"via-terminal/internal/via"
+	"github.com/bulkinglb/via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
+	"github.com/bulkinglb/via-terminal/internal/via"
 )
 
 // Screen rows above each tab's content: title, tab bar, blank line. Mouse
