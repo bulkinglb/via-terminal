@@ -18,7 +18,8 @@ func main() {
 	if err := run(*defPath); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		if errors.Is(err, fs.ErrPermission) {
-			fmt.Fprintln(os.Stderr, "hint: add the hidraw udev rule from docs/project-notes.md")
+			fmt.Fprintln(os.Stderr, `hint: allow hidraw access with a udev rule, e.g. in /etc/udev/rules.d/99-via.rules:
+  KERNEL=="hidraw*", SUBSYSTEM=="hidraw", MODE="0660", TAG+="uaccess"`)
 		}
 		os.Exit(1)
 	}
