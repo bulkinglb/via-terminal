@@ -132,27 +132,49 @@ func TestLightFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame := func(effect string, at time.Duration) []string {
-		return lightFrame(def.Keys, rgbSettings{effect: effect, hue: 0, sat: 255, val: 255, speed: 128}, at)
+	colors := func(effect string, at time.Duration) []string {
+		return lightFrame(def.Keys, rgbSettings{effect: effect, hue: 0, sat: 255, val: 255, speed: 128}, at, nil)
 	}
-	for _, c := range frame("Solid Color", time.Second) {
+	for _, c := range colors("Solid Color", time.Second) {
 		if c != "\x1b[48;2;255;0;0m" {
 			t.Fatalf("solid red should color every key red, got %q", c)
 		}
 	}
-	for _, c := range frame("All Off", time.Second) {
+	for _, c := range colors("All Off", time.Second) {
 		if c != "\x1b[48;2;0;0;0m" {
 			t.Fatalf("all off should be black, got %q", c)
 		}
 	}
-	cycle := frame("Cycle Left Right", time.Second)
+	cycle := colors("Cycle Left Right", time.Second)
 	if cycle[0] == cycle[13] {
 		t.Error("cycle left right should color the left and right of the board differently")
 	}
-	if later := frame("Cycle Left Right", 1500*time.Millisecond); later[0] == cycle[0] {
+	if later := colors("Cycle Left Right", 1500*time.Millisecond); later[0] == cycle[0] {
 		t.Error("the animation should move over time")
 	}
-	if effectName("Pinwheel Sat.") != effectName("Band Pinwheel Sat") || simulated("Raindrops") || !simulated("Band Val") {
-		t.Error("VIA and QMK effect names should match, random effects aren't simulated")
+	if effectName("Pinwheel Sat.") != effectName("Band Pinwheel Sat") {
+		t.Error("VIA and QMK effect names should match")
+	}
+
+	// Every effect of the board except MonsGeek's own "Close All" is simulated,
+	// and the random and reactive ones light something without real input.
+	for _, o := range def.Menus[0].Items[2].Options {
+		if o.Label == "Close All" {
+			continue
+		}
+		if !simulated(o.Label) {
+			t.Errorf("%s isn't simulated", o.Label)
+		}
+		if o.Label == "All Off" {
+			continue
+		}
+		// 150ms after a simulated press, so single-press splashes have grown.
+		a, b := colors(o.Label, 3150*time.Millisecond), colors(o.Label, 3150*time.Millisecond)
+		if !slices.Equal(a, b) {
+			t.Errorf("%s should draw the same frame for the same time", o.Label)
+		}
+		if !slices.ContainsFunc(a, func(c string) bool { return c != "\x1b[48;2;0;0;0m" }) {
+			t.Errorf("%s leaves the whole board dark", o.Label)
+		}
 	}
 }

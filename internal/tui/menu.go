@@ -274,12 +274,26 @@ func (m model) viewMenu(b *strings.Builder) {
 	b.WriteString("\x1b[2m↑↓ SELECT · ←→ CHANGE · SHIFT+←→ FINE · ENTER/CLICK LIST · TAB SWITCH · Q QUIT\x1b[22m")
 
 	if s, ok := m.rgbMatrix(); ok {
-		colors := lightFrame(m.def.Keys, s, m.now.Sub(m.start))
+		colors := lightFrame(m.def.Keys, s, m.now.Sub(m.start), m.mods())
 		b.WriteString("\n\n" + render(m.def.Keys, func(defs.Key) string { return "" }, func(i int) string { return colors[i] }))
-		if !simulated(s.effect) {
+		switch {
+		case !simulated(s.effect):
 			b.WriteString("\n\x1b[2mPREVIEW SHOWS THE PLAIN COLOR, THIS EFFECT ISN'T SIMULATED\x1b[22m")
+		case reactive(s.effect):
+			b.WriteString("\n\x1b[2mPREVIEW TYPES BY ITSELF TO SHOW THIS EFFECT\x1b[22m")
 		}
 	}
+}
+
+// mods marks keys whose layer 0 keycode isn't a letter, digit, punctuation
+// or space; QMK boards usually flag those as modifiers for Alphas Mods.
+func (m model) mods() []bool {
+	mods := make([]bool, len(m.def.Keys))
+	for i, k := range m.def.Keys {
+		c := m.keymap[m.index(0, k)]
+		mods[i] = !(c >= 0x04 && c <= 0x27 || c >= 0x2C && c <= 0x38)
+	}
+	return mods
 }
 
 func percent(v, lo, hi int) string {
