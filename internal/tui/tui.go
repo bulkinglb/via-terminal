@@ -24,8 +24,9 @@ type model struct {
 	keymap    []uint16
 	gridLines int
 
-	tab    int     // 0 is the keymap, then one tab per definition menu
+	tab    int     // 0 is the keymap, then one tab per definition menu, then the reference
 	picker *picker // open search list, nil when closed
+	ref    *picker // keycode reference, always there
 	status string
 
 	layer          int
@@ -57,9 +58,10 @@ func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16)
 		values:    map[string]int{},
 		dirty:     map[byte]bool{},
 		start:     time.Now(),
+		ref:       newReference(layers, def.Custom),
 	}
 	for _, k := range keycodes.Picker(layers, def.Custom) {
-		m.keycodeChoices = append(m.keycodeChoices, choice{k.Name, k.Long, int(k.Code)})
+		m.keycodeChoices = append(m.keycodeChoices, choice{k.Name, k.Long, int(k.Code), k.Desc})
 	}
 	for _, menu := range def.Menus {
 		for _, c := range menu.Items {
@@ -80,7 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		s := msg.String()
-		if s == "ctrl+c" || s == "q" && m.picker == nil {
+		if s == "ctrl+c" || s == "q" && m.picker == nil && m.tab != m.refTab() {
 			return m.save(), tea.Quit
 		}
 		if m.picker != nil {
@@ -94,8 +96,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.switchTab(m.tab - 1)
 			return m, m.tick()
 		}
-		if m.tab == 0 {
+		switch m.tab {
+		case 0:
 			return m.updateMapping(s), nil
+		case m.refTab():
+			return m.updateReference(msg), nil
 		}
 		return m.updateMenu(s), nil
 
@@ -108,8 +113,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.tab == 0 {
+		switch m.tab {
+		case 0:
 			return m.clickMapping(mouse.X, mouse.Y), nil
+		case m.refTab():
+			return m, nil
 		}
 		return m.clickMenu(mouse.X, mouse.Y), nil
 
@@ -128,7 +136,7 @@ func (m model) tabNames() []string {
 	for _, menu := range m.def.Menus {
 		names = append(names, strings.ToUpper(menu.Label))
 	}
-	return names
+	return append(names, "KEYCODES")
 }
 
 // tabAt matches the tab bar's layout: each name padded by a space on both
@@ -148,7 +156,7 @@ func (m model) tabAt(x int) int {
 func (m model) switchTab(t int) model {
 	m.status = ""
 	m = m.save()
-	n := len(m.def.Menus) + 1
+	n := len(m.def.Menus) + 2
 	m.tab, m.row, m.picker = (t%n+n)%n, 0, nil
 	m.tickGen++
 	return m
@@ -181,9 +189,12 @@ func (m model) View() tea.View {
 		}
 	}
 	b.WriteString("\n\n")
-	if m.tab == 0 {
+	switch m.tab {
+	case 0:
 		m.viewMapping(&b)
-	} else {
+	case m.refTab():
+		m.viewReference(&b)
+	default:
 		m.viewMenu(&b)
 	}
 

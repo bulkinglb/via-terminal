@@ -104,7 +104,7 @@ func TestMenuRows(t *testing.T) {
 func TestPickerFilter(t *testing.T) {
 	var keys []choice
 	for _, k := range keycodes.Picker(2, nil) {
-		keys = append(keys, choice{k.Name, k.Long, int(k.Code)})
+		keys = append(keys, choice{k.Name, k.Long, int(k.Code), k.Desc})
 	}
 	for query, want := range map[string]int{"kc_esc": 0x29, "space": 0x2C, "mo(1": 0x5221} {
 		p := newPicker("", keys, 0, nil)
@@ -115,7 +115,7 @@ func TestPickerFilter(t *testing.T) {
 		}
 	}
 
-	effects := []choice{{"SOLID COLOR", "", 1}, {"BREATHING", "", 5}, {"SOLID REACTIVE", "", 34}}
+	effects := []choice{{label: "SOLID COLOR", value: 1}, {label: "BREATHING", value: 5}, {label: "SOLID REACTIVE", value: 34}}
 	p := newPicker("", effects, 34, nil)
 	if p.pick != 2 {
 		t.Errorf("the current value should start selected, got %d", p.pick)
@@ -175,6 +175,31 @@ func TestLightFrame(t *testing.T) {
 		}
 		if !slices.ContainsFunc(a, func(c string) bool { return c != "\x1b[48;2;0;0;0m" }) {
 			t.Errorf("%s leaves the whole board dark", o.Label)
+		}
+	}
+}
+
+func TestReference(t *testing.T) {
+	ref := newReference(2, []string{"BT DEV1"})
+	if ref.matches[0].label != "▽" {
+		t.Errorf("the reference should start with how to read keycodes, got %q", ref.matches[0].label)
+	}
+	for query, want := range map[string]string{"vold": "VOLD", "volume down": "VOLD", "play/pause": "MPLY", "bootloader": "QK_BOOT", "mo(1": "MO(1)", "bt dev": "BT DEV1"} {
+		ref.query = query
+		ref.filter()
+		if len(ref.matches) == 0 || ref.matches[0].label != want {
+			t.Errorf("%q should find %s first, got %v", query, want, ref.matches[:min(3, len(ref.matches))])
+		}
+	}
+	for code, want := range map[uint16]string{
+		0x00AA: "Volume Down",
+		0x4104: "A when tapped, layer 1 while held",
+		0x5221: "Layer 1 while held",
+		0x0204: "A with LSFT held",
+		0x7E00: "Keyboard specific, set by the firmware",
+	} {
+		if got := keycodes.Describe(code); got != want {
+			t.Errorf("Describe(0x%04X) = %q, want %q", code, got, want)
 		}
 	}
 }

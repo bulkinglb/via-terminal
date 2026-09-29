@@ -115,7 +115,8 @@ func (m model) viewMapping(b *strings.Builder) {
 		return
 	}
 	k := m.def.Keys[m.sel]
-	fmt.Fprintf(b, "> %d,%d  %s\n%s\n", k.Row, k.Col, keycodes.Name(m.keymap[m.index(m.layer, k)], m.def.Custom), m.status)
+	code := m.keymap[m.index(m.layer, k)]
+	fmt.Fprintf(b, "> %d,%d  %s  \x1b[2m%s\x1b[22m\n%s\n", k.Row, k.Col, keycodes.Name(code, m.def.Custom), keycodes.Describe(code), m.status)
 	b.WriteString("\x1b[2mARROWS MOVE · ENTER/CLICK REMAP · [ ] OR 0-9 LAYER · TAB SWITCH · Q QUIT\x1b[22m")
 }
 

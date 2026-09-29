@@ -28,7 +28,7 @@ type rgbSettings struct {
 func (m model) rgbMatrix() (rgbSettings, bool) {
 	s := rgbSettings{sat: 255, val: 255, speed: 128}
 	found := false
-	if m.tab == 0 {
+	if m.tab == 0 || m.tab > len(m.def.Menus) {
 		return s, false
 	}
 	for _, c := range m.def.Menus[m.tab-1].Items {
