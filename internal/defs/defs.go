@@ -20,6 +20,7 @@ type Definition struct {
 	Keys                []Key
 	Encoders            int      // rotary encoders, from "eN" key legends
 	Custom              []string // customKeycodes names, QK_KB_0 onwards
+	Menus               []Menu
 }
 
 // Key is one physical key in KLE units (1 = 1u). X2/Y2/W2/H2 describe a
@@ -91,6 +92,7 @@ func parse(data []byte) (Definition, error) {
 		Matrix              struct{ Rows, Cols int }
 		Layouts             struct{ Keymap [][]json.RawMessage }
 		CustomKeycodes      []struct{ Name string }
+		Menus               []json.RawMessage
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Definition{}, err
@@ -116,7 +118,11 @@ func parse(data []byte) (Definition, error) {
 	for _, c := range raw.CustomKeycodes {
 		custom = append(custom, c.Name)
 	}
-	return Definition{raw.Name, uint16(vid), uint16(pid), raw.Matrix.Rows, raw.Matrix.Cols, keys, encoders, custom}, nil
+	menus, err := parseMenus(raw.Menus)
+	if err != nil {
+		return Definition{}, err
+	}
+	return Definition{raw.Name, uint16(vid), uint16(pid), raw.Matrix.Rows, raw.Matrix.Cols, keys, encoders, custom, menus}, nil
 }
 
 // parseKLE walks keyboard-layout-editor rows: property objects move the

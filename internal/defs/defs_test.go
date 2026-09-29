@@ -58,3 +58,45 @@ func TestFind(t *testing.T) {
 		t.Error("expected an error for an unknown board")
 	}
 }
+
+func TestMenus(t *testing.T) {
+	def, err := Find(0x342D, 0xE4C2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(def.Menus) != 1 || def.Menus[0].Label != "Lighting" {
+		t.Fatalf("menus: %+v", def.Menus)
+	}
+	items := def.Menus[0].Items
+	if len(items) != 5 || items[0].Type != "" || items[0].Label != "Backlight" {
+		t.Fatalf("want a Backlight heading and 4 controls, got %+v", items)
+	}
+	effect, speed, color := items[2], items[3], items[4]
+	if effect.Channel != 3 || effect.ValueID != 2 || len(effect.Options) != 46 || effect.Options[1] != (Option{"Solid Color", 1}) {
+		t.Errorf("effect: %+v", effect)
+	}
+	if color.Size() != 2 || items[1].Size() != 1 {
+		t.Error("color should take two bytes, brightness one")
+	}
+	for effectValue, want := range map[int][2]bool{0: {false, false}, 7: {true, true}, 24: {true, false}} {
+		v := map[string]int{"id_qmk_rgb_matrix_effect": effectValue}
+		if got := [2]bool{speed.Visible(v), color.Visible(v)}; got != want {
+			t.Errorf("effect %d: speed/color visible = %v, want %v", effectValue, got, want)
+		}
+	}
+
+	values := map[string]int{"a": 1, "b": 3, "c": 0}
+	for cond, want := range map[string]bool{
+		"({a} == 1 || {b} > 5) && !{c}": true,
+		"{a} == 1 && {b} <= 2":          true && false,
+		"{missing} == 0":                true,
+		"{a} ==":                        true, // unreadable conditions show the control
+	} {
+		if got := (Control{ShowIf: cond}).Visible(values); got != want {
+			t.Errorf("%q = %v, want %v", cond, got, want)
+		}
+	}
+	if _, err := parse([]byte(`{"vendorId":"0x1","productId":"0x1","matrix":{"rows":1,"cols":1},"layouts":{"keymap":[["0,0"]]},"menus":[{"label":"L","content":[{"label":"x","type":"range","content":["id"]}]}]}`)); err == nil {
+		t.Error("short content should be an error, not a panic")
+	}
+}

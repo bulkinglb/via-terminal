@@ -1,9 +1,8 @@
-// Package tui is the interactive keymap editor.
+// Package tui is the interactive keymap and lighting editor.
 package tui
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -13,10 +12,9 @@ import (
 	"via-terminal/internal/via"
 )
 
-// Lines above the keyboard; mouse hit-testing counts on it.
-const gridTop = 3
-
-const pickRows = 10
+// Screen rows above each tab's content: title, tab bar, blank line. Mouse
+// hit-testing counts on it.
+const bodyTop = 3
 
 type model struct {
 	def       defs.Definition
@@ -25,15 +23,20 @@ type model struct {
 	keymap    []uint16
 	gridLines int
 
-	layer  int
-	sel    int
+	tab    int // 0 is the keymap, then one tab per definition menu
 	status string
 
+	layer   int
+	sel     int
 	picking bool
 	query   string
 	all     []keycodes.Keycode
 	matches []keycodes.Keycode
 	pick    int
+
+	values map[string]int // menu settings by control ID, absent if unreadable
+	row    int            // selected row on a menu tab
+	dirty  map[byte]bool  // channels changed since the last save
 }
 
 // Run shows the editor until the user quits. keymap is indexed like
@@ -44,171 +47,129 @@ func Run(def defs.Definition, dev *via.Device, layers int, keymap []uint16) erro
 }
 
 func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16) model {
-	return model{
+	m := model{
 		def:       def,
 		dev:       dev,
 		layers:    layers,
 		keymap:    keymap,
 		gridLines: strings.Count(render(def.Keys, func(defs.Key) string { return "" }, -1), "\n") + 1,
 		all:       keycodes.Picker(layers, def.Custom),
+		values:    map[string]int{},
+		dirty:     map[byte]bool{},
 	}
+	for _, menu := range def.Menus {
+		for _, c := range menu.Items {
+			if c.Type == "" {
+				continue
+			}
+			if v, err := dev.CustomValue(c.Channel, c.ValueID, c.Size()); err == nil {
+				m.values[c.ID] = v
+			}
+		}
+	}
+	return m
 }
 
 func (m model) Init() tea.Cmd { return nil }
 
-func (m model) index(layer int, k defs.Key) int {
-	return (layer*m.def.Rows+k.Row)*m.def.Cols + k.Col
-}
-
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
+		s := msg.String()
+		if s == "ctrl+c" || s == "q" && !m.picking {
+			return m.save(), tea.Quit
 		}
 		if m.picking {
 			return m.updatePicker(msg), nil
 		}
-		switch s := msg.String(); s {
-		case "q":
-			return m, tea.Quit
-		case "up", "k":
-			m.sel = nearestKey(m.def.Keys, m.sel, 0, -1)
-		case "down", "j":
-			m.sel = nearestKey(m.def.Keys, m.sel, 0, 1)
-		case "left", "h":
-			m.sel = nearestKey(m.def.Keys, m.sel, -1, 0)
-		case "right", "l":
-			m.sel = nearestKey(m.def.Keys, m.sel, 1, 0)
-		case "]", "tab", "pgdown":
-			m.layer = (m.layer + 1) % m.layers
-		case "[", "shift+tab", "pgup":
-			m.layer = (m.layer + m.layers - 1) % m.layers
-		case "enter", "space":
-			m = m.openPicker()
-		default:
-			if len(s) == 1 && s[0] >= '0' && int(s[0]-'0') < m.layers {
-				m.layer = int(s[0] - '0')
-			}
+		switch s {
+		case "tab":
+			return m.switchTab(m.tab + 1), nil
+		case "shift+tab":
+			return m.switchTab(m.tab - 1), nil
 		}
+		if m.tab == 0 {
+			return m.updateMapping(s), nil
+		}
+		return m.updateMenu(s), nil
 
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
 		if mouse.Y == 1 {
-			line := m.layerLine()
-			if abs(mouse.X-strings.Index(line, "<")) <= 1 {
-				m.layer = (m.layer + m.layers - 1) % m.layers
-			} else if abs(mouse.X-strings.Index(line, ">")) <= 1 {
-				m.layer = (m.layer + 1) % m.layers
+			if t := m.tabAt(mouse.X); t >= 0 {
+				return m.switchTab(t), nil
 			}
-		} else if i := keyAt(m.def.Keys, mouse.X, mouse.Y-gridTop); i >= 0 {
-			m.sel = i
-			if !m.picking {
-				m = m.openPicker()
-			}
-		} else if m.picking {
-			start, _ := m.pickWindow()
-			if i := start + mouse.Y - (gridTop + m.gridLines + 2); i >= start && i < len(m.matches) {
-				m = m.assign(m.matches[i])
-			}
+			return m, nil
 		}
+		if m.tab == 0 {
+			return m.clickMapping(mouse.X, mouse.Y), nil
+		}
+		return m.clickMenu(mouse.X, mouse.Y), nil
 	}
 	return m, nil
 }
 
-func (m model) openPicker() model {
-	m.picking, m.query, m.pick, m.matches = true, "", 0, m.all
+func (m model) tabNames() []string {
+	names := []string{"MAPPING"}
+	for _, menu := range m.def.Menus {
+		names = append(names, strings.ToUpper(menu.Label))
+	}
+	return names
+}
+
+// tabAt matches the tab bar's layout: each name padded by a space on both
+// sides, one space between tabs.
+func (m model) tabAt(x int) int {
+	start := 0
+	for i, name := range m.tabNames() {
+		end := start + len([]rune(name)) + 2
+		if x >= start && x < end {
+			return i
+		}
+		start = end + 1
+	}
+	return -1
+}
+
+func (m model) switchTab(t int) model {
+	m.status = ""
+	m = m.save()
+	n := len(m.def.Menus) + 1
+	m.tab, m.row, m.picking = (t%n+n)%n, 0, false
 	return m
 }
 
-func (m model) updatePicker(msg tea.KeyPressMsg) model {
-	switch msg.String() {
-	case "esc":
-		m.picking = false
-		return m
-	case "enter":
-		if len(m.matches) > 0 {
-			return m.assign(m.matches[m.pick])
+// save persists changed menu settings, which the board otherwise only keeps
+// in RAM until it's unplugged.
+func (m model) save() model {
+	for ch := range m.dirty {
+		if err := m.dev.SaveCustom(ch); err != nil {
+			m.status = "SAVE FAILED: " + err.Error()
+			return m
 		}
-		return m
-	case "up":
-		m.pick = max(0, m.pick-1)
-		return m
-	case "down":
-		m.pick = max(0, min(len(m.matches)-1, m.pick+1))
-		return m
-	case "backspace":
-		if r := []rune(m.query); len(r) > 0 {
-			m.query = string(r[:len(r)-1])
-		}
-	default:
-		m.query += msg.Text
+		delete(m.dirty, ch)
 	}
-	m.matches, m.pick = keycodes.Filter(m.all, m.query), 0
 	return m
-}
-
-func (m model) assign(kc keycodes.Keycode) model {
-	m.picking = false
-	k := m.def.Keys[m.sel]
-	if err := m.dev.SetKeycode(m.layer, k.Row, k.Col, kc.Code); err != nil {
-		m.status = "WRITE FAILED: " + err.Error()
-		return m
-	}
-	m.keymap[m.index(m.layer, k)] = kc.Code
-	m.status = fmt.Sprintf("SET %d,%d ON LAYER %d TO %s", k.Row, k.Col, m.layer, keycodes.Name(kc.Code, m.def.Custom))
-	return m
-}
-
-func (m model) pickWindow() (start, end int) {
-	start = max(0, m.pick-pickRows+1)
-	return start, min(len(m.matches), start+pickRows)
-}
-
-func (m model) layerLine() string {
-	return fmt.Sprintf("LAYER < %d >", m.layer)
-}
-
-// legend shows the layer 0 key above the current mapping on higher layers,
-// so it stays clear which physical key is being changed.
-func (m model) legend(k defs.Key) string {
-	label := func(code uint16) string {
-		switch code {
-		case 0x0000:
-			return ""
-		case 0x0001:
-			return "▽"
-		}
-		return keycodes.Name(code, m.def.Custom)
-	}
-	current := label(m.keymap[m.index(m.layer, k)])
-	if m.layer == 0 {
-		return current
-	}
-	return label(m.keymap[m.index(0, k)]) + "\n" + current
 }
 
 func (m model) View() tea.View {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\x1b[1m◆ %s\x1b[22m - VIA v%d\n%s\n\n", strings.ToUpper(m.def.Name), m.dev.Version, m.layerLine())
-	b.WriteString(render(m.def.Keys, m.legend, m.sel))
-	b.WriteString("\n\n")
-
-	k := m.def.Keys[m.sel]
-	if m.picking {
-		fmt.Fprintf(&b, "> REMAP %d,%d ON LAYER %d: %s_\n", k.Row, k.Col, m.layer, m.query)
-		start, end := m.pickWindow()
-		for i := start; i < end; i++ {
-			line := fmt.Sprintf("  %-12s %s", m.matches[i].Name, m.matches[i].Long)
-			if i == m.pick {
-				line = "\x1b[7m" + line + "\x1b[27m"
-			}
-			b.WriteString(line + "\n")
+	fmt.Fprintf(&b, "\x1b[1m◆ %s\x1b[22m - VIA v%d\n", strings.ToUpper(m.def.Name), m.dev.Version)
+	for i, name := range m.tabNames() {
+		if i > 0 {
+			b.WriteString(" ")
 		}
-		b.WriteString("\x1b[2mTYPE TO SEARCH · ENTER/CLICK ASSIGN · ESC CANCEL\x1b[22m")
+		if i == m.tab {
+			b.WriteString("\x1b[7m " + name + " \x1b[27m")
+		} else {
+			b.WriteString(" " + name + " ")
+		}
+	}
+	b.WriteString("\n\n")
+	if m.tab == 0 {
+		m.viewMapping(&b)
 	} else {
-		fmt.Fprintf(&b, "> %d,%d  %s\n%s\n", k.Row, k.Col, keycodes.Name(m.keymap[m.index(m.layer, k)], m.def.Custom), m.status)
-		b.WriteString("\x1b[2mARROWS MOVE · ENTER/CLICK REMAP · [ ] OR 0-9 LAYER · Q QUIT\x1b[22m")
+		m.viewMenu(&b)
 	}
 
 	v := tea.NewView(b.String())
@@ -216,35 +177,3 @@ func (m model) View() tea.View {
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
-
-// nearestKey steps from key i in direction dx,dy to the closest key whose
-// center lies past that edge of key i. Off-axis distance counts double so
-// moves stay in their row or column.
-func nearestKey(keys []defs.Key, i, dx, dy int) int {
-	k := keys[i]
-	cx, cy := k.X+k.W/2, k.Y+k.H/2
-	best, bestScore := i, math.Inf(1)
-	for j, o := range keys {
-		x, y := o.X+o.W/2, o.Y+o.H/2
-		var along, across float64
-		switch {
-		case dx > 0:
-			along, across = x-(k.X+k.W), math.Abs(y-cy)
-		case dx < 0:
-			along, across = k.X-x, math.Abs(y-cy)
-		case dy > 0:
-			along, across = y-(k.Y+k.H), math.Abs(x-cx)
-		default:
-			along, across = k.Y-y, math.Abs(x-cx)
-		}
-		if along <= 0 {
-			continue
-		}
-		if score := along + 2*across; score < bestScore {
-			best, bestScore = j, score
-		}
-	}
-	return best
-}
-
-func abs(n int) int { return max(n, -n) }

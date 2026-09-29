@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -65,5 +66,35 @@ func TestNearestKey(t *testing.T) {
 		if got := nearestKey(keys, c.from, c.dx, c.dy); got != c.want {
 			t.Errorf("nearestKey(%d, %d, %d) = %d, want %d", c.from, c.dx, c.dy, got, c.want)
 		}
+	}
+}
+
+func TestMenuRows(t *testing.T) {
+	def, err := defs.Find(0x342D, 0xE4C2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := model{def: def, tab: 1, values: map[string]int{
+		"id_qmk_rgb_matrix_brightness":   255,
+		"id_qmk_rgb_matrix_effect":       7,
+		"id_qmk_rgb_matrix_effect_speed": 72,
+		"id_qmk_rgb_matrix_color":        0xAA80,
+	}}
+	var got []string
+	for _, r := range m.menuRows() {
+		label, value := m.rowText(r)
+		got = append(got, label+"="+value)
+	}
+	want := []string{"BRIGHTNESS=100%", "EFFECT=BAND VAL", "EFFECT SPEED=28%", "COLOR=██ 239°", "COLOR SATURATION=50%"}
+	if !slices.Equal(got, want) {
+		t.Errorf("rows:\n got %v\nwant %v", got, want)
+	}
+
+	m.values["id_qmk_rgb_matrix_effect"] = 0
+	if n := len(m.menuRows()); n != 2 {
+		t.Errorf("effect All Off should leave brightness and effect, got %d rows", n)
+	}
+	if swatch(0x00FF) != "\x1b[38;2;255;0;0m██\x1b[39m" || swatch(0x0000) != "\x1b[38;2;255;255;255m██\x1b[39m" {
+		t.Errorf("swatch: red %q, white %q", swatch(0x00FF), swatch(0x0000))
 	}
 }

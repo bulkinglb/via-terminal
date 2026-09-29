@@ -18,6 +18,9 @@ const (
 	cmdGetProtocolVersion = 0x01
 	cmdSetKeycode         = 0x05
 	cmdResetKeymap        = 0x06
+	cmdCustomSetValue     = 0x07
+	cmdCustomGetValue     = 0x08
+	cmdCustomSave         = 0x09
 	cmdGetLayerCount      = 0x11
 	cmdGetKeymapBuffer    = 0x12
 	cmdSetKeymapBuffer    = 0x13
@@ -191,6 +194,35 @@ func (d *Device) SetEncoders(count int, codes []uint16) error {
 // longer timeout than other commands.
 func (d *Device) ResetKeymap() error {
 	_, err := d.commandWithin(10*time.Second, cmdResetKeymap)
+	return err
+}
+
+// CustomValue reads a menu setting of size bytes, big-endian.
+func (d *Device) CustomValue(channel, id byte, size int) (int, error) {
+	resp, err := d.command(cmdCustomGetValue, channel, id)
+	if err != nil {
+		return 0, err
+	}
+	v := 0
+	for _, b := range resp[3 : 3+size] {
+		v = v<<8 | int(b)
+	}
+	return v, nil
+}
+
+// SetCustomValue applies a menu setting right away but only in RAM; call
+// SaveCustom to keep it across unplugging.
+func (d *Device) SetCustomValue(channel, id byte, size, value int) error {
+	args := []byte{channel, id}
+	for i := size - 1; i >= 0; i-- {
+		args = append(args, byte(value>>(8*i)))
+	}
+	_, err := d.command(cmdCustomSetValue, args...)
+	return err
+}
+
+func (d *Device) SaveCustom(channel byte) error {
+	_, err := d.command(cmdCustomSave, channel)
 	return err
 }
 
