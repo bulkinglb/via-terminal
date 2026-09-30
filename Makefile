@@ -17,7 +17,7 @@ release: test
 	rm -rf dist
 	mkdir dist
 	@for p in $(PLATFORMS); do \
-		os=$${p%/*}; arch=$${p#*/}; name=via-terminal-$(VERSION)-$$os-$$arch; \
+		os=$${p%/*}; arch=$${p#*/}; name=via-terminal-$$os-$$arch; \
 		echo "building $$name"; \
 		if [ $$os = windows ]; then \
 			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$$name.exe . || exit 1; \

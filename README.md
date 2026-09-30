@@ -6,9 +6,9 @@ A terminal UI for VIA keyboards: remap keys, change lighting, edit macros, back 
 
 ## Install
 
-    go install github.com/bulkinglb/via-terminal@latest
+    curl -fsSL https://raw.githubusercontent.com/bulkinglb/via-terminal/master/install.sh | sh
 
-Or download a binary from [Releases](https://github.com/bulkinglb/via-terminal/releases).
+This puts the right release for your system in `/usr/local/bin`. To skip sudo, end it with `| INSTALL_DIR=~/.local/bin sh` instead. On Windows, download the `.exe` from [Releases](https://github.com/bulkinglb/via-terminal/releases). With Go: `go install github.com/bulkinglb/via-terminal@latest`.
 
 ## Setup (Linux)
 
