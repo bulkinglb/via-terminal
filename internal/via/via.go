@@ -202,12 +202,18 @@ func (d *Device) Encoders(layers, count int) ([]uint16, error) {
 // SetEncoders writes codes laid out like Encoders returns them.
 func (d *Device) SetEncoders(count int, codes []uint16) error {
 	for i, code := range codes {
-		layer, enc, cw := i/(count*2), i/2%count, i%2
-		if _, err := d.command(cmdSetEncoder, byte(layer), byte(enc), byte(cw), byte(code>>8), byte(code)); err != nil {
+		if err := d.SetEncoder(i/(count*2), i/2%count, i%2, code); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// SetEncoder sets what turning one encoder does on a layer; cw is 0 for
+// counter-clockwise and 1 for clockwise.
+func (d *Device) SetEncoder(layer, encoder, cw int, code uint16) error {
+	_, err := d.command(cmdSetEncoder, byte(layer), byte(encoder), byte(cw), byte(code>>8), byte(code))
+	return err
 }
 
 // ResetKeymap restores the firmware's default keymap and encoder mapping.

@@ -33,6 +33,7 @@ type model struct {
 	layer          int
 	sel            int
 	keycodeChoices []choice
+	encoders       []uint16 // knob turns laid out like via.Device.Encoders, nil without a knob
 
 	values map[string]int // menu settings by control ID, absent if unreadable
 	row    int            // selected row on a menu tab
@@ -63,6 +64,9 @@ func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16)
 	}
 	for _, k := range keycodes.Picker(layers, def.Custom) {
 		m.keycodeChoices = append(m.keycodeChoices, choice{k.Name, k.Long, int(k.Code), k.Desc})
+	}
+	if def.Encoders > 0 {
+		m.encoders, _ = dev.Encoders(layers, def.Encoders)
 	}
 	count, _ := dev.MacroCount()
 	m.macros = &macroState{count: count}

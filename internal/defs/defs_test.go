@@ -51,6 +51,11 @@ func TestFind(t *testing.T) {
 	if err != nil || def.Rows != 6 || def.Cols != 15 || def.Encoders != 1 {
 		t.Fatalf("bundled M1 V5 ISO: %+v, %v", def, err)
 	}
+	for _, k := range def.Keys {
+		if k.Knob != (k.Row == 0 && k.Col == 14) {
+			t.Errorf("only 0,14 is the knob, got %+v", k)
+		}
+	}
 
 	configDir, _ := os.UserConfigDir()
 	userDir := filepath.Join(configDir, "via-terminal", "keyboards")

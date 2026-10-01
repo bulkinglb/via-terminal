@@ -31,7 +31,7 @@ func (m model) updateMapping(s string) model {
 	case "[", "pgup":
 		m.layer = (m.layer + m.layers - 1) % m.layers
 	case "enter", "space":
-		m = m.openKeycodePicker()
+		m = m.remap()
 	default:
 		if len(s) == 1 && s[0] >= '0' && int(s[0]-'0') < m.layers {
 			m.layer = int(s[0] - '0')
@@ -50,19 +50,61 @@ func (m model) clickMapping(x, y int) model {
 		}
 	} else if i := keyAt(m.def.Keys, x, y-gridTop); i >= 0 {
 		m.sel = i
-		m = m.openKeycodePicker()
+		m = m.remap()
 	} else if m.picker != nil {
 		m = m.clickPicker(y, gridTop+m.gridLines+1)
 	}
 	return m
 }
 
-func (m model) openKeycodePicker() model {
+// remap opens the keycode search for the selected key. For a knob it first
+// asks whether to change the press or a turn.
+func (m model) remap() model {
 	k := m.def.Keys[m.sel]
+	press := m.keymap[m.index(m.layer, k)]
 	prompt := fmt.Sprintf("REMAP %d,%d ON LAYER %d", k.Row, k.Col, m.layer)
-	m.picker = newPicker(prompt, m.keycodeChoices, int(m.keymap[m.index(m.layer, k)]), func(m model, v int) model {
-		return m.assign(uint16(v))
+	if !k.Knob || m.encoders == nil {
+		m.picker = newPicker(prompt, m.keycodeChoices, int(press), func(m model, v int) model {
+			return m.assign(uint16(v))
+		})
+		return m
+	}
+	left, right := m.knobTurns(k)
+	actions := []choice{
+		{"PRESS", m.name(press), 0, ""},
+		{"TURN LEFT", m.name(left), 1, ""},
+		{"TURN RIGHT", m.name(right), 2, ""},
+	}
+	m.picker = newPicker(fmt.Sprintf("KNOB ON LAYER %d", m.layer), actions, 0, func(m model, action int) model {
+		current := []uint16{press, left, right}[action]
+		m.picker = newPicker(prompt+" · "+actions[action].label, m.keycodeChoices, int(current), func(m model, v int) model {
+			if action == 0 {
+				return m.assign(uint16(v))
+			}
+			return m.setTurn(k, action-1, uint16(v))
+		})
+		return m
 	})
+	return m
+}
+
+func (m model) name(code uint16) string { return keycodes.Name(code, m.def.Custom) }
+
+// knobTurns returns what turning knob k left and right does on the shown
+// layer.
+func (m model) knobTurns(k defs.Key) (left, right uint16) {
+	i := (m.layer*m.def.Encoders + k.Encoder) * 2
+	return m.encoders[i], m.encoders[i+1]
+}
+
+// setTurn changes a turn of knob k on the shown layer: cw 0 is left, 1 right.
+func (m model) setTurn(k defs.Key, cw int, code uint16) model {
+	if err := m.dev.SetEncoder(m.layer, k.Encoder, cw, code); err != nil {
+		m.status = "WRITE FAILED: " + err.Error()
+		return m
+	}
+	m.encoders[(m.layer*m.def.Encoders+k.Encoder)*2+cw] = code
+	m.status = fmt.Sprintf("SET KNOB TURN %s ON LAYER %d TO %s", []string{"LEFT", "RIGHT"}[cw], m.layer, m.name(code))
 	return m
 }
 
@@ -120,7 +162,12 @@ func (m model) viewMapping(b *strings.Builder) {
 	}
 	k := m.def.Keys[m.sel]
 	code := m.keymap[m.index(m.layer, k)]
-	fmt.Fprintf(b, "> %d,%d  %s  \x1b[2m%s\x1b[22m\n%s\n", k.Row, k.Col, keycodes.Name(code, m.def.Custom), keycodes.Describe(code), m.status)
+	knob := ""
+	if k.Knob && m.encoders != nil {
+		left, right := m.knobTurns(k)
+		knob = fmt.Sprintf("  · TURN LEFT %s · TURN RIGHT %s", m.name(left), m.name(right))
+	}
+	fmt.Fprintf(b, "> %d,%d  %s  \x1b[2m%s\x1b[22m%s\n%s\n", k.Row, k.Col, m.name(code), keycodes.Describe(code), knob, m.status)
 	b.WriteString("\x1b[2mARROWS MOVE · ENTER/CLICK REMAP · [ ] OR 0-9 LAYER · TAB SWITCH · Q QUIT\x1b[22m")
 }
 

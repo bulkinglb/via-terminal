@@ -29,6 +29,8 @@ type Key struct {
 	Row, Col       int
 	X, Y, W, H     float64
 	X2, Y2, W2, H2 float64
+	Knob           bool // the press of a rotary encoder
+	Encoder        int  // which encoder, for a knob
 }
 
 //go:embed keyboards/*.json
@@ -160,6 +162,7 @@ func parseKLE(rows [][]json.RawMessage) ([]Key, int, error) {
 			if len(labels) > 9 && labels[9] != "" {
 				if _, err := fmt.Sscanf(labels[9], "e%d", &encoder); err == nil {
 					encoders = max(encoders, encoder+1)
+					k.Knob, k.Encoder = true, encoder
 				}
 			}
 			var group, choice int
