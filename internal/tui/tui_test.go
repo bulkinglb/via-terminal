@@ -152,6 +152,10 @@ func TestLightFrame(t *testing.T) {
 	if later := colors("Cycle Left Right", 1500*time.Millisecond); later[0] == cycle[0] {
 		t.Error("the animation should move over time")
 	}
+	gradient := colors("Gradient Left Right", time.Second)
+	if gradient[0] == gradient[13] || !slices.Equal(gradient, colors("Gradient Left Right", 3*time.Second)) {
+		t.Error("gradients should color across the board and stay still")
+	}
 	if effectName("Pinwheel Sat.") != effectName("Band Pinwheel Sat") {
 		t.Error("VIA and QMK effect names should match")
 	}

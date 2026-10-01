@@ -76,8 +76,6 @@ type position struct{ x, y, dist, angle float64 }
 // 0-1 factor) for a key at phase c, which counts full cycles over time.
 var (
 	hueEffects = map[string]func(p position, c float64) float64{
-		"gradientupdown":       func(p position, c float64) float64 { return p.y / 2 },
-		"gradientleftright":    func(p position, c float64) float64 { return p.x / 2 },
 		"cycleall":             func(p position, c float64) float64 { return c },
 		"cycleleftright":       func(p position, c float64) float64 { return p.x - c },
 		"cycleupdown":          func(p position, c float64) float64 { return p.y - c },
@@ -164,6 +162,13 @@ type effectFunc = func(k pixel, f frame, h, s, v float64) (float64, float64, flo
 // Effects that don't fit a single hue, saturation or brightness change get
 // the whole color and return it.
 var fullEffects = map[string]effectFunc{
+	// Gradients don't move; speed sets how far the hue spreads, as in QMK.
+	"gradientupdown": func(k pixel, f frame, h, s, v float64) (float64, float64, float64) {
+		return h + float64(64*f.speed/256)*math.Floor(k.ly/16)/256, s, v
+	},
+	"gradientleftright": func(k pixel, f frame, h, s, v float64) (float64, float64, float64) {
+		return h + math.Floor(float64(64*f.speed/256)*k.lx/32)/256, s, v
+	},
 	"alphasmods": func(k pixel, f frame, h, s, v float64) (float64, float64, float64) {
 		if k.mod {
 			h += float64(f.speed) / 256
