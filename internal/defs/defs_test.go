@@ -32,7 +32,12 @@ func TestParseKLE(t *testing.T) {
 }
 
 func TestFind(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// os.UserConfigDir reads XDG_CONFIG_HOME on Linux, HOME on macOS and
+	// AppData on Windows; point all of them at a temp dir.
+	tmp := t.TempDir()
+	for _, env := range []string{"XDG_CONFIG_HOME", "HOME", "AppData"} {
+		t.Setenv(env, tmp)
+	}
 	sub, _ := fs.Sub(bundled, "keyboards")
 	names, _ := fs.Glob(sub, "*.json")
 	for _, name := range names {
@@ -47,7 +52,8 @@ func TestFind(t *testing.T) {
 		t.Fatalf("bundled M1 V5 ISO: %+v, %v", def, err)
 	}
 
-	userDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "via-terminal", "keyboards")
+	configDir, _ := os.UserConfigDir()
+	userDir := filepath.Join(configDir, "via-terminal", "keyboards")
 	os.MkdirAll(userDir, 0o755)
 	os.WriteFile(filepath.Join(userDir, "broken.json"), []byte("{"), 0o644)
 	os.WriteFile(filepath.Join(userDir, "mine.json"), []byte(`{"name": "Mine", "vendorId": "0x342D", "productId": "0xE4C2", "matrix": {"rows": 1, "cols": 1}, "layouts": {"keymap": [["0,0"]]}}`), 0o644)
