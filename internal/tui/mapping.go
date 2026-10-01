@@ -101,10 +101,14 @@ func (m model) legend(k defs.Key) string {
 }
 
 func (m model) viewMapping(b *strings.Builder) {
-	b.WriteString(m.layerLine() + "\n\n")
+	help, marked := m.layerHelp()
+	fmt.Fprintf(b, "%s  \x1b[2m%s\x1b[22m\n\n", m.layerLine(), help)
 	b.WriteString(render(m.def.Keys, m.legend, func(i int) string {
-		if i == m.sel {
+		switch {
+		case i == m.sel:
 			return "\x1b[7m"
+		case marked[i]:
+			return "\x1b[100m"
 		}
 		return ""
 	}))

@@ -203,3 +203,42 @@ func TestReference(t *testing.T) {
 		}
 	}
 }
+
+func TestLayerHelp(t *testing.T) {
+	def, err := defs.Find(0x342D, 0xE4C2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The M1 V5's layout: Fn (5,10) holds layer 1 on Windows and layer 3 on
+	// Mac, Fn + right shift (4,12) reaches layer 4, and the Mac base layer 2
+	// is switched by the firmware.
+	m := model{def: def, layers: 6, keymap: make([]uint16, 6*def.Rows*def.Cols)}
+	for i := range m.keymap {
+		m.keymap[i] = 0x0001
+	}
+	set := func(layer, row, col int, code uint16) { m.keymap[(layer*def.Rows+row)*def.Cols+col] = code }
+	set(0, 4, 12, 0x00E5)
+	set(0, 5, 10, 0x5221)
+	set(1, 4, 12, 0x5224)
+	set(2, 5, 10, 0x5223)
+	set(2, 0, 0, 0x0029)
+	set(3, 0, 1, 0x00BE)
+
+	for layer, want := range []string{
+		"BASE LAYER",
+		"HOLD FN",
+		"NO KEY LEADS HERE, THE FIRMWARE SWITCHES IT (E.G. A WIN/MAC SWITCH)",
+		"FROM LAYER 2: HOLD FN",
+		"HOLD FN + RSFT",
+		"UNUSED",
+	} {
+		m.layer = layer
+		if got, _ := m.layerHelp(); got != want {
+			t.Errorf("layer %d: %q, want %q", layer, got, want)
+		}
+	}
+	m.layer = 4
+	if _, marked := m.layerHelp(); len(marked) != 2 {
+		t.Errorf("layer 4 should mark Fn and right shift, got %v", marked)
+	}
+}
