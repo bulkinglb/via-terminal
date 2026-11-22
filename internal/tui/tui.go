@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -46,7 +47,13 @@ type model struct {
 // Run shows the editor until the user quits. keymap is indexed like
 // via.Device.Keymap returns it and is updated in place on every write.
 func Run(def defs.Definition, dev *via.Device, layers int, keymap []uint16) error {
-	_, err := tea.NewProgram(newModel(def, dev, layers, keymap)).Run()
+	final, err := tea.NewProgram(newModel(def, dev, layers, keymap)).Run()
+	// Saving after the screen is gone lets a failure reach the user.
+	if m, ok := final.(model); ok {
+		if serr := m.saveDirty(); serr != nil {
+			err = errors.Join(err, fmt.Errorf("menu settings weren't saved and reset when the board is unplugged: %w", serr))
+		}
+	}
 	return err
 }
 
@@ -68,8 +75,8 @@ func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16)
 	if def.Encoders > 0 {
 		m.encoders, _ = dev.Encoders(layers, def.Encoders)
 	}
-	count, _ := dev.MacroCount()
-	m.macros = &macroState{count: count}
+	count, err := dev.MacroCount()
+	m.macros = &macroState{count: count, err: err}
 	for i := range count {
 		code := 0x7700 + uint16(i)
 		m.keycodeChoices = append(m.keycodeChoices, choice{keycodes.Name(code, nil), "", int(code), keycodes.Describe(code)})
@@ -94,7 +101,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch s := msg.String(); {
 		case s == "ctrl+c":
-			return m.save(), tea.Quit
+			return m, tea.Quit
 		case m.picker != nil:
 			return m.updatePicker(msg), nil
 		case m.macros.editing:
@@ -108,7 +115,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.tab == m.refTab():
 			return m.updateReference(msg), nil
 		case s == "q":
-			return m.save(), tea.Quit
+			return m, tea.Quit
 		case m.tab == 0:
 			return m.updateMapping(s), nil
 		case m.tab == m.macroTab():
@@ -186,14 +193,21 @@ func (m model) switchTab(t int) model {
 // save persists changed menu settings, which the board otherwise only keeps
 // in RAM until it's unplugged.
 func (m model) save() model {
+	if err := m.saveDirty(); err != nil {
+		m.status = "SAVE FAILED: " + err.Error()
+	}
+	return m
+}
+
+// saveDirty leaves a channel marked until it saves, so a later try can redo it.
+func (m model) saveDirty() error {
 	for ch := range m.dirty {
 		if err := m.dev.SaveCustom(ch); err != nil {
-			m.status = "SAVE FAILED: " + err.Error()
-			return m
+			return err
 		}
 		delete(m.dirty, ch)
 	}
-	return m
+	return nil
 }
 
 func (m model) View() tea.View {

@@ -134,11 +134,11 @@ func (m model) saveMacro() model {
 func (m model) viewMacros(b *strings.Builder) {
 	mc := m.macros
 	switch {
-	case mc.count == 0:
-		b.WriteString("THIS BOARD HAS NO MACROS\n")
-		return
 	case mc.err != nil:
 		b.WriteString("COULDN'T READ THE MACROS: " + mc.err.Error() + "\n")
+		return
+	case mc.count == 0:
+		b.WriteString("THIS BOARD HAS NO MACROS\n")
 		return
 	}
 	used := 0

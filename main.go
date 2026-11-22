@@ -71,7 +71,11 @@ func run(defPath, cmd, file string) error {
 		os.Exit(2)
 	}
 
-	def, info, err := pick(defPath, via.Devices())
+	infos, err := via.Devices()
+	if err != nil {
+		return err
+	}
+	def, info, err := pick(defPath, infos)
 	if err != nil {
 		return err
 	}
@@ -175,7 +179,7 @@ func readBackup(dev *via.Device, def defs.Definition, layers int, keys []uint16)
 	}
 	count, err := dev.MacroCount()
 	if err != nil || count == 0 {
-		return b, 0, nil
+		return b, 0, err
 	}
 	size, err := dev.MacroBufferSize()
 	if err != nil {

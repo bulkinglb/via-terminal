@@ -53,20 +53,30 @@ type Info struct {
 // Devices lists VIA interfaces without opening them. Filtering on the usage
 // page matters: probing a board's other interfaces would wait out the read
 // timeout and write VIA packets into their reports.
-func Devices() []Info {
-	devs, _ := usbhid.Enumerate(func(d *usbhid.Device) bool {
+func Devices() ([]Info, error) {
+	devs, err := usbhid.Enumerate(func(d *usbhid.Device) bool {
 		return d.UsagePage() == usagePage && d.Usage() == usage
 	})
+	if err != nil {
+		return nil, err
+	}
 	var infos []Info
 	for _, d := range devs {
 		infos = append(infos, Info{d.Path(), d.VendorId(), d.ProductId(), d})
 	}
-	return infos
+	return infos, nil
 }
 
 type Device struct {
-	dev     *usbhid.Device
+	dev     hid
 	Version uint16
+}
+
+// hid is what Device uses of usbhid.Device, so tests can stand in a board.
+type hid interface {
+	SetOutputReport(id byte, data []byte) error
+	GetInputReport() (byte, []byte, error)
+	Close() error
 }
 
 // Open opens a VIA interface and reads its protocol version, which doubles
@@ -118,8 +128,13 @@ func (d *Device) SetKeymap(codes []uint16) error {
 	return d.writeBuffer(cmdSetKeymapBuffer, 0, buf)
 }
 
+// MacroCount is 0 on firmware built without macros. Any other error is
+// returned, so a flaky read isn't mistaken for a board without macros.
 func (d *Device) MacroCount() (int, error) {
 	resp, err := d.command(cmdMacroCount)
+	if errors.Is(err, ErrUnhandled) {
+		return 0, nil
+	}
 	return int(resp[1]), err
 }
 
