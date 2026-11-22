@@ -101,6 +101,45 @@ func TestCustomValue(t *testing.T) {
 	}
 }
 
+func TestProtocol10(t *testing.T) {
+	mem := make([]byte, 16)
+	dev, board := newFake(func(req []byte) []byte {
+		if req[0] == cmdCustomGetValue {
+			req[2] = 200
+			return req
+		}
+		return buffers(mem)(req)
+	})
+	dev.Version = 10
+	// RGB light brightness is lighting value 0x80, with no channel byte.
+	if err := dev.SetCustomValue(2, 1, 1, 128); err != nil {
+		t.Fatal(err)
+	}
+	if got := board.sent[0][:3]; !slices.Equal(got, []byte{cmdCustomSetValue, 0x80, 128}) {
+		t.Errorf("set sent % X", got)
+	}
+	if v, err := dev.CustomValue(1, 2, 1); err != nil || v != 200 || board.sent[1][1] != 0x0A {
+		t.Errorf("backlight effect: got %d %v from % X", v, err, board.sent[1][:2])
+	}
+	if _, err := dev.CustomValue(0, 1, 1); !errors.Is(err, ErrUnhandled) {
+		t.Errorf("custom channels didn't exist yet, got %v", err)
+	}
+
+	// Macros go to the board without the action prefix and come back with it.
+	if err := dev.SetMacroBuffer([]byte{'a', 1, 1, 0x04, 0}, 16); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(mem[:4], []byte{'a', 1, 0x04, 0}) {
+		t.Errorf("stored % X", mem[:4])
+	}
+	if buf, err := dev.MacroBuffer(4); err != nil || !slices.Equal(buf, []byte{'a', 1, 1, 0x04, 0}) {
+		t.Errorf("read back % X %v", buf, err)
+	}
+	if n, err := dev.MacroLen([]byte{1, 4, '9', '|', 0}); err == nil {
+		t.Errorf("a delay should be refused, got %d bytes", n)
+	}
+}
+
 func TestCommandErrors(t *testing.T) {
 	unhandled, _ := newFake(func(req []byte) []byte { req[0] = cmdUnhandled; return req })
 	if _, err := unhandled.LayerCount(); !errors.Is(err, ErrUnhandled) {

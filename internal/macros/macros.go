@@ -239,6 +239,46 @@ func block(inner string) ([]byte, error) {
 	return out, nil
 }
 
+// Before VIA protocol 11 a key action was its kind byte and the key, with no
+// prefix, and there were no delays.
+
+// FromLegacy converts a protocol 10 buffer to the layout Decode reads.
+func FromLegacy(buf []byte) []byte {
+	var out []byte
+	for i := 0; i < len(buf); i++ {
+		switch c := buf[i]; c {
+		case tap, down, up:
+			// An action cut off by the terminator plays nothing, so it's dropped.
+			if i+1 < len(buf) && buf[i+1] != 0 {
+				out = append(out, prefix, c, buf[i+1])
+				i++
+			}
+		default:
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// ToLegacy converts what Encode writes to the protocol 10 layout.
+func ToLegacy(buf []byte) ([]byte, error) {
+	var out []byte
+	for i := 0; i < len(buf); i++ {
+		switch c := buf[i]; {
+		case c == down || c == up:
+			return nil, fmt.Errorf(`\x%02X can't be typed on VIA protocol 10 boards, it means a key action there`, c)
+		case c != prefix:
+			out = append(out, c)
+		case i+2 < len(buf) && buf[i+1] != delay:
+			out = append(out, buf[i+1], buf[i+2])
+			i += 2
+		default:
+			return nil, fmt.Errorf("delays like {100} need VIA protocol 11 or newer")
+		}
+	}
+	return out, nil
+}
+
 // basic parses a key for a macro. Macros only store one byte per key, and
 // the firmware counts zero bytes to find where each macro starts, so NO
 // can't be used either.

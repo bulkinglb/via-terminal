@@ -215,6 +215,19 @@ var table = slices.Concat(series(), []Keycode{
 	{0x7020, "EC_SWAP", "MAGIC_SWAP_ESCAPE_CAPS_LOCK", "Swap Esc⇄Caps"},
 	{0x7021, "EC_NORM", "MAGIC_UNSWAP_ESCAPE_CAPS_LOCK", "Unswap Esc⇄Caps"},
 	{0x7022, "EC_TOGG", "MAGIC_TOGGLE_ESCAPE_CAPS_LOCK", "Toggle Esc⇄Caps"},
+	{0x7480, "AU_ON", "AUDIO_ON", "Audio On"},
+	{0x7481, "AU_OFF", "AUDIO_OFF", "Audio Off"},
+	{0x7482, "AU_TOGG", "AUDIO_TOGGLE", "Toggle Audio"},
+	{0x748A, "CK_TOGG", "AUDIO_CLICKY_TOGGLE", "Toggle the clicking sound on every key press"},
+	{0x748B, "CK_ON", "AUDIO_CLICKY_ON", "Clicky On"},
+	{0x748C, "CK_OFF", "AUDIO_CLICKY_OFF", "Clicky Off"},
+	{0x748D, "CK_UP", "AUDIO_CLICKY_UP", "Clicky frequency up"},
+	{0x748E, "CK_DOWN", "AUDIO_CLICKY_DOWN", "Clicky frequency down"},
+	{0x748F, "CK_RST", "AUDIO_CLICKY_RESET", "Reset the clicky frequency"},
+	{0x7490, "MU_ON", "MUSIC_ON", "Music mode on: keys play notes"},
+	{0x7491, "MU_OFF", "MUSIC_OFF", "Music mode off"},
+	{0x7492, "MU_TOGG", "MUSIC_TOGGLE", "Toggle music mode"},
+	{0x7493, "MU_NEXT", "MUSIC_MODE_NEXT", "Next music mode"},
 	{0x7800, "BL_ON", "BACKLIGHT_ON", "Backlight On"},
 	{0x7801, "BL_OFF", "BACKLIGHT_OFF", "Backlight Off"},
 	{0x7802, "BL_TOGG", "BACKLIGHT_TOGGLE", "Toggle Backlight"},
@@ -233,6 +246,15 @@ var table = slices.Concat(series(), []Keycode{
 	{0x7828, "RGB_VAD", "RGB_BRIGHTNESS_DOWN", "Lighting brightness down"},
 	{0x7829, "RGB_SPI", "RGB_SPEED_UP", "Lighting effect speed up"},
 	{0x782A, "RGB_SPD", "RGB_SPEED_DOWN", "Lighting effect speed down"},
+	{0x782B, "RGB_M_P", "RGB_MODE_PLAIN", "Lighting: solid color"},
+	{0x782C, "RGB_M_B", "RGB_MODE_BREATHE", "Lighting: breathing"},
+	{0x782D, "RGB_M_R", "RGB_MODE_RAINBOW", "Lighting: rainbow"},
+	{0x782E, "RGB_M_SW", "RGB_MODE_SWIRL", "Lighting: swirl"},
+	{0x782F, "RGB_M_SN", "RGB_MODE_SNAKE", "Lighting: snake"},
+	{0x7830, "RGB_M_K", "RGB_MODE_KNIGHT", "Lighting: Knight Rider"},
+	{0x7831, "RGB_M_X", "RGB_MODE_XMAS", "Lighting: Christmas"},
+	{0x7832, "RGB_M_G", "RGB_MODE_GRADIENT", "Lighting: gradient"},
+	{0x7833, "RGB_M_T", "RGB_MODE_RGBTEST", "Lighting: red, green, blue test"},
 	{0x7840, "RM_ON", "RGB_MATRIX_ON", "RGB Matrix On"},
 	{0x7841, "RM_OFF", "RGB_MATRIX_OFF", "RGB Matrix Off"},
 	{0x7842, "RM_TOGG", "RGB_MATRIX_TOGGLE", "Toggle RGB Matrix"},
@@ -251,6 +273,13 @@ var table = slices.Concat(series(), []Keycode{
 	{0x7C02, "DB_TOGG", "DEBUG_TOGGLE", "Toggle QMK debug output"},
 	{0x7C03, "EE_CLR", "CLEAR_EEPROM", "Wipe the board's saved settings and keymap (EEPROM)"},
 	{0x7C16, "QK_GESC", "GRAVE_ESCAPE", "Esc, or ` while Shift or GUI is held"},
+	{0x7C18, "SC_LCPO", "SPACE_CADET_LEFT_CTRL_PARENTHESIS_OPEN", "Left Control when held, ( when tapped"},
+	{0x7C19, "SC_RCPC", "SPACE_CADET_RIGHT_CTRL_PARENTHESIS_CLOSE", "Right Control when held, ) when tapped"},
+	{0x7C1A, "SC_LSPO", "SPACE_CADET_LEFT_SHIFT_PARENTHESIS_OPEN", "Left Shift when held, ( when tapped"},
+	{0x7C1B, "SC_RSPC", "SPACE_CADET_RIGHT_SHIFT_PARENTHESIS_CLOSE", "Right Shift when held, ) when tapped"},
+	{0x7C1C, "SC_LAPO", "SPACE_CADET_LEFT_ALT_PARENTHESIS_OPEN", "Left Alt when held, ( when tapped"},
+	{0x7C1D, "SC_RAPC", "SPACE_CADET_RIGHT_ALT_PARENTHESIS_CLOSE", "Right Alt when held, ) when tapped"},
+	{0x7C1E, "SC_SENT", "SPACE_CADET_RIGHT_SHIFT_ENTER", "Right Shift when held, Enter when tapped"},
 	{0x7C73, "CW_TOGG", "CAPS_WORD_TOGGLE", "Caps Word: capitals until the end of the word"},
 	{0x7C77, "TL_LOWR", "TRI_LAYER_LOWER", "Lower"},
 	{0x7C78, "TL_UPPR", "TRI_LAYER_UPPER", "Upper"},
@@ -289,13 +318,13 @@ func series() []Keycode {
 	return list
 }
 
-// Describe says what a keycode does, for keys in the table and the ones
-// built from arguments like LT(1,A).
-func Describe(code uint16) string {
+// describe12 says what a v12 keycode does, for keys in the table and the
+// ones built from arguments like LT(1,A).
+func describe12(code uint16) string {
 	if d, ok := descs[code]; ok {
 		return d
 	}
-	basic := func(c uint16) string { return Name(c&0xFF, nil) }
+	basic := func(c uint16) string { return name12(c&0xFF, nil) }
 	mods := func(mask uint16) string { return strings.Join(modNames(mask), "+") }
 	layer := code & 0x1F
 	switch {
@@ -373,10 +402,10 @@ var numbered = []struct {
 	{"QK_USER_", 0x7E40, 0x1C0},
 }
 
-// Name turns a v12 keycode into a QMK-style name that Parse reads back.
+// name12 turns a v12 keycode into a QMK-style name that parse12 reads back.
 // custom holds the definition's customKeycodes, which VIA maps to QK_KB_0
 // onwards. Codes without a meaningful name come out as hex.
-func Name(code uint16, custom []string) string {
+func name12(code uint16, custom []string) string {
 	if name, ok := names[code]; ok {
 		return name
 	}
@@ -388,7 +417,7 @@ func Name(code uint16, custom []string) string {
 			return fmt.Sprintf("%s%d", r.prefix, code-r.base)
 		}
 	}
-	basic := func(c uint16) string { return Name(c&0xFF, nil) }
+	basic := func(c uint16) string { return name12(c&0xFF, nil) }
 	mods := func(mask uint16) string { return strings.Join(modNames(mask), "|") }
 	switch {
 	case code >= 0x0100 && code < 0x2000 && code>>8&0xF != 0:
@@ -431,9 +460,9 @@ var byName = func() map[string]uint16 {
 	return m
 }()
 
-// Parse reads a keycode the way Name writes it. It ignores case, allows a
-// KC_ prefix and long names like SPACE, and takes hex such as 0x7E05.
-func Parse(s string, custom []string) (uint16, error) {
+// parse12 reads a v12 keycode the way name12 writes it. It ignores case,
+// allows a KC_ prefix and long names like SPACE, and takes hex such as 0x7E05.
+func parse12(s string, custom []string) (uint16, error) {
 	s = strings.ToUpper(strings.TrimSpace(s))
 	for i, name := range custom {
 		if strings.ToUpper(name) == s {
@@ -493,7 +522,7 @@ func Parse(s string, custom []string) (uint16, error) {
 	if err != nil {
 		return 0, unknown
 	}
-	inner, err := Parse(args, nil)
+	inner, err := parse12(args, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -512,7 +541,7 @@ func number(s string, max uint16) (uint16, error) {
 }
 
 func parseBasic(s string) (uint16, error) {
-	code, err := Parse(s, nil)
+	code, err := parse12(s, nil)
 	if err == nil && code > 0xFF {
 		err = fmt.Errorf("%q: only basic keys fit here", s)
 	}
@@ -556,19 +585,27 @@ func modNames(mask uint16) []string {
 	return names
 }
 
-// Picker is everything the remap picker offers: the named table,
-// layer switches for the board's layers and its custom keycodes.
+// Picker is everything the remap picker offers, numbered like the board:
+// the named table, layer switches for the board's layers and its custom
+// keycodes. Keys the board's protocol has no number for are left out.
 func Picker(layers int, custom []string) []Keycode {
 	list := slices.Clone(table)
 	for _, base := range []uint16{0x5220, 0x5260, 0x52C0, 0x5280, 0x5200, 0x5240} {
 		for layer := range layers {
 			code := base | uint16(layer)
-			list = append(list, Keycode{code, Name(code, nil), "", Describe(code)})
+			list = append(list, Keycode{code, name12(code, nil), "", describe12(code)})
 		}
 	}
 	for i, name := range custom {
 		code := 0x7E00 + uint16(i)
-		list = append(list, Keycode{code, strings.ToUpper(name), "", Describe(code)})
+		list = append(list, Keycode{code, strings.ToUpper(name), "", describe12(code)})
 	}
-	return list
+	var native []Keycode
+	for _, k := range list {
+		if code, ok := Native(k.Code); ok {
+			k.Code = code
+			native = append(native, k)
+		}
+	}
+	return native
 }

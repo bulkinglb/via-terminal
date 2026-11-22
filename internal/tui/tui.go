@@ -78,8 +78,9 @@ func newModel(def defs.Definition, dev *via.Device, layers int, keymap []uint16)
 	count, err := dev.MacroCount()
 	m.macros = &macroState{count: count, err: err}
 	for i := range count {
-		code := 0x7700 + uint16(i)
-		m.keycodeChoices = append(m.keycodeChoices, choice{keycodes.Name(code, nil), "", int(code), keycodes.Describe(code)})
+		if code, ok := keycodes.Native(0x7700 + uint16(i)); ok {
+			m.keycodeChoices = append(m.keycodeChoices, choice{keycodes.Name(code, nil), "", int(code), keycodes.Describe(code)})
+		}
 	}
 	for _, menu := range def.Menus {
 		for _, c := range menu.Items {

@@ -95,6 +95,7 @@ func parse(data []byte) (Definition, error) {
 		Layouts             struct{ Keymap [][]json.RawMessage }
 		CustomKeycodes      []struct{ Name string }
 		Menus               []json.RawMessage
+		Lighting            json.RawMessage // v2 definitions, for boards before VIA protocol 11
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Definition{}, err
@@ -123,6 +124,9 @@ func parse(data []byte) (Definition, error) {
 	menus, err := parseMenus(raw.Menus)
 	if err != nil {
 		return Definition{}, err
+	}
+	if menus == nil && raw.Lighting != nil {
+		menus = v2Lighting(raw.Lighting)
 	}
 	return Definition{raw.Name, uint16(vid), uint16(pid), raw.Matrix.Rows, raw.Matrix.Cols, keys, encoders, custom, menus}, nil
 }

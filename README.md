@@ -23,6 +23,8 @@ Allow access to the keyboard, then replug it:
     via-terminal import keymap.json   # load them back
     via-terminal reset                # restore the default keymap
 
-Boards without a bundled definition need `--def board.json`.
+Boards without a bundled definition need `--def board.json`, from [the VIA keyboards repo](https://github.com/the-via/keyboards): a v3 file, or v2 for firmware older than VIA protocol 11.
+
+Firmware with VIA protocol 9 and newer works. Before protocol 11, macros can't wait (`{100}`) and only QMK backlight and RGB light settings show up.
 
 MIT license.

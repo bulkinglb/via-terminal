@@ -149,3 +149,37 @@ func TestPresetsAndLenientControls(t *testing.T) {
 		t.Errorf("button sends 1 by default, toggle takes [off, on]: %+v", extra[2:])
 	}
 }
+
+func TestV2Lighting(t *testing.T) {
+	v2 := func(lighting string) Definition {
+		t.Helper()
+		def, err := parse([]byte(`{"name": "Old", "vendorId": "0x1234", "productId": "0x5678", "lighting": ` + lighting +
+			`, "matrix": {"rows": 1, "cols": 1}, "layouts": {"keymap": [["0,0"]]}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return def
+	}
+	labels := func(def Definition) (out []string) {
+		for _, m := range def.Menus {
+			for _, c := range m.Items {
+				out = append(out, c.Label)
+			}
+		}
+		return out
+	}
+	if got := labels(v2(`"qmk_backlight_rgblight"`)); len(got) != 8 || got[0] != "Backlight" || got[3] != "Underglow" {
+		t.Errorf("qmk_backlight_rgblight: %v", got)
+	}
+	if got := v2(`"none"`).Menus; got != nil {
+		t.Errorf("none should have no menus, got %v", got)
+	}
+	def := v2(`{"extends": "qmk_rgblight", "underglowEffects": [["Off", 0], ["Solid", 1], ["Rainbow", 0]]}`)
+	effect, color := def.Menus[0].Items[2], def.Menus[0].Items[4]
+	if len(effect.Options) != 3 || effect.Options[2] != (Option{"Rainbow", 2}) {
+		t.Errorf("own effects: %v", effect.Options)
+	}
+	if !color.Visible(map[string]int{"id_qmk_rgblight_effect": 1}) || color.Visible(map[string]int{"id_qmk_rgblight_effect": 2}) {
+		t.Errorf("the color should only show for effects that use one: %q", color.ShowIf)
+	}
+}

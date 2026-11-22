@@ -1,6 +1,7 @@
 package defs
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 )
@@ -22,6 +23,58 @@ var presets = map[string][]Menu{
 }
 
 var onOff = []Option{{"Off", 0}, {"On", 1}}
+
+// v2Lighting turns a v2 definition's "lighting" into menus. It is a preset
+// name, or an object that extends one and can list its own effects as
+// [name, colors needed] pairs.
+// shortcut: wt_rgb_backlight and wt_mono_backlight boards get no lighting tab, add them when someone has one.
+func v2Lighting(raw json.RawMessage) []Menu {
+	var custom struct {
+		Extends                   string
+		Effects, UnderglowEffects [][]json.RawMessage
+	}
+	if json.Unmarshal(raw, &custom.Extends) != nil && json.Unmarshal(raw, &custom) != nil {
+		return nil
+	}
+	var items []Control
+	if custom.Extends == "qmk_backlight" || custom.Extends == "qmk_backlight_rgblight" {
+		items = backlight()
+		if names, _ := effectPairs(custom.Effects); names != nil {
+			items[2].Options = nil // the effect dropdown
+			for i, name := range names {
+				items[2].Options = append(items[2].Options, Option{name, i})
+			}
+		}
+	}
+	if custom.Extends == "qmk_rgblight" || custom.Extends == "qmk_backlight_rgblight" {
+		effects, noColor := rgblightEffects, []int{35}
+		if names, none := effectPairs(custom.UnderglowEffects); names != nil {
+			effects, noColor = names, none
+		}
+		items = append(items, rgbSection("Underglow", "id_qmk_rgblight", 2, effects, noColor...)...)
+	}
+	if items == nil {
+		return nil
+	}
+	return []Menu{{"Lighting", items}}
+}
+
+// effectPairs splits [name, colors needed] pairs into names and the
+// positions of effects that use no color.
+func effectPairs(pairs [][]json.RawMessage) (names []string, noColor []int) {
+	for i, p := range pairs {
+		var name string
+		var colors int
+		if len(p) != 2 || json.Unmarshal(p[0], &name) != nil || json.Unmarshal(p[1], &colors) != nil {
+			return nil, nil
+		}
+		names = append(names, name)
+		if colors == 0 {
+			noColor = append(noColor, i)
+		}
+	}
+	return names, noColor
+}
 
 func backlight() []Control {
 	return []Control{

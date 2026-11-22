@@ -111,12 +111,16 @@ func (m model) saveMacro() model {
 	list := slices.Clone(mc.list)
 	list[mc.sel] = string(mc.edit)
 	buf, err := macros.Encode(list)
+	n := 0
+	if err == nil {
+		n, err = m.dev.MacroLen(buf)
+	}
 	switch {
 	case err != nil:
 		m.status = strings.ToUpper(err.Error())
 		return m
-	case len(buf) > mc.size:
-		m.status = fmt.Sprintf("TOO LONG: THE MACROS NEED %d BYTES, THE BOARD HAS %d", len(buf), mc.size)
+	case n > mc.size:
+		m.status = fmt.Sprintf("TOO LONG: THE MACROS NEED %d BYTES, THE BOARD HAS %d", n, mc.size)
 		return m
 	}
 	if err := m.dev.SetMacroBuffer(buf, mc.size); err != nil {
@@ -143,7 +147,7 @@ func (m model) viewMacros(b *strings.Builder) {
 	}
 	used := 0
 	if buf, err := macros.Encode(mc.list); err == nil {
-		used = len(buf)
+		used, _ = m.dev.MacroLen(buf)
 	}
 	fmt.Fprintf(b, "\x1b[1mMACROS\x1b[22m  %d OF %d BYTES USED\n", used, mc.size)
 	for i, text := range mc.list {

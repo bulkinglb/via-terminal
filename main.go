@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bulkinglb/via-terminal/internal/defs"
+	"github.com/bulkinglb/via-terminal/internal/keycodes"
 	"github.com/bulkinglb/via-terminal/internal/keymap"
 	"github.com/bulkinglb/via-terminal/internal/macros"
 	"github.com/bulkinglb/via-terminal/internal/tui"
@@ -34,7 +35,7 @@ import and reset save a backup of the board first.
 var version = "dev"
 
 func main() {
-	defPath := flag.String("def", "", "VIA v3 definition JSON (default: look up by vendor/product ID)")
+	defPath := flag.String("def", "", "VIA definition JSON, v3 or v2 for older boards (default: look up by vendor/product ID)")
 	showVersion := flag.Bool("version", false, "print the version")
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, usage)
@@ -84,9 +85,10 @@ func run(defPath, cmd, file string) error {
 		return err
 	}
 	defer dev.Close()
-	if dev.Version < 12 {
-		return fmt.Errorf("VIA protocol v%d is not supported yet, only v12 and later", dev.Version)
+	if dev.Version < 9 {
+		return fmt.Errorf("VIA protocol v%d is too old, v9 and later are supported", dev.Version)
 	}
+	keycodes.UseProtocol(int(dev.Version))
 	layers, err := dev.LayerCount()
 	if err != nil {
 		return err
@@ -131,8 +133,12 @@ func run(defPath, cmd, file string) error {
 				return fmt.Errorf("%s has %d macros, the board has %d", file, len(next.Macros), len(current.Macros))
 			}
 			macroBuf, _ = macros.Encode(next.Macros)
-			if len(macroBuf) > macroSize {
-				return fmt.Errorf("%s: the macros need %d bytes, the board has %d", file, len(macroBuf), macroSize)
+			n, err := dev.MacroLen(macroBuf)
+			if err != nil {
+				return fmt.Errorf("%s: %w", file, err)
+			}
+			if n > macroSize {
+				return fmt.Errorf("%s: the macros need %d bytes, the board has %d", file, n, macroSize)
 			}
 		}
 		if err := backup(def, current); err != nil {

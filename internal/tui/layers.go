@@ -15,9 +15,12 @@ type step struct {
 	verb string
 }
 
-// layerTarget reports which layer a keycode switches to and how.
+// layerTarget reports which layer a board keycode switches to and how.
 func layerTarget(code uint16) (layer int, verb string, ok bool) {
+	code, ok = keycodes.V12(code)
 	switch {
+	case !ok:
+		return 0, "", false
 	case code >= 0x4000 && code < 0x5000:
 		return int(code >> 8 & 0xF), "HOLD", true
 	case code >= 0x5000 && code < 0x5200:

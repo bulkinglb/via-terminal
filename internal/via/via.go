@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"rafaelmartins.com/p/usbhid"
+
+	"github.com/bulkinglb/via-terminal/internal/macros"
 )
 
 const (
@@ -143,13 +145,38 @@ func (d *Device) MacroBufferSize() (int, error) {
 	return int(binary.BigEndian.Uint16(resp[1:3])), err
 }
 
+// MacroBuffer reads the macros in the layout macros.Decode reads, whatever
+// the protocol stores.
 func (d *Device) MacroBuffer(size int) ([]byte, error) {
-	return d.readBuffer(cmdGetMacroBuffer, size)
+	buf, err := d.readBuffer(cmdGetMacroBuffer, size)
+	if err == nil && d.Version < 11 {
+		buf = macros.FromLegacy(buf)
+	}
+	return buf, err
+}
+
+// MacroLen is how many buffer bytes macros written by macros.Encode take on
+// this board, or why the board can't store them.
+func (d *Device) MacroLen(data []byte) (int, error) {
+	data, err := d.stored(data)
+	return len(data), err
+}
+
+func (d *Device) stored(data []byte) ([]byte, error) {
+	if d.Version < 11 {
+		return macros.ToLegacy(data)
+	}
+	return data, nil
 }
 
 // SetMacroBuffer replaces all macros the way VIA does: clear the buffer,
 // mark its last byte as a write in progress, write, then clear the mark.
+// data is laid out as macros.Encode writes it.
 func (d *Device) SetMacroBuffer(data []byte, size int) error {
+	data, err := d.stored(data)
+	if err != nil {
+		return err
+	}
 	if len(data) > size {
 		return fmt.Errorf("macros need %d bytes, the board has %d", len(data), size)
 	}
@@ -160,7 +187,7 @@ func (d *Device) SetMacroBuffer(data []byte, size int) error {
 	if err := d.writeBuffer(cmdSetMacroBuffer, size-1, []byte{0xFF}); err != nil {
 		return err
 	}
-	err := d.writeBuffer(cmdSetMacroBuffer, 0, data)
+	err = d.writeBuffer(cmdSetMacroBuffer, 0, data)
 	return errors.Join(err, d.writeBuffer(cmdSetMacroBuffer, size-1, []byte{0x00}))
 }
 
@@ -241,12 +268,16 @@ func (d *Device) ResetKeymap() error {
 
 // CustomValue reads a menu setting of size bytes, big-endian.
 func (d *Device) CustomValue(channel, id byte, size int) (int, error) {
-	resp, err := d.command(cmdCustomGetValue, channel, id)
+	args, err := d.valueArgs(channel, id)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := d.command(cmdCustomGetValue, args...)
 	if err != nil {
 		return 0, err
 	}
 	v := 0
-	for _, b := range resp[3 : 3+size] {
+	for _, b := range resp[1+len(args) : 1+len(args)+size] {
 		v = v<<8 | int(b)
 	}
 	return v, nil
@@ -255,17 +286,36 @@ func (d *Device) CustomValue(channel, id byte, size int) (int, error) {
 // SetCustomValue applies a menu setting right away but only in RAM; call
 // SaveCustom to keep it across unplugging.
 func (d *Device) SetCustomValue(channel, id byte, size, value int) error {
-	args := []byte{channel, id}
+	args, err := d.valueArgs(channel, id)
+	if err != nil {
+		return err
+	}
 	for i := size - 1; i >= 0; i-- {
 		args = append(args, byte(value>>(8*i)))
 	}
-	_, err := d.command(cmdCustomSetValue, args...)
+	_, err = d.command(cmdCustomSetValue, args...)
 	return err
 }
 
+// SaveCustom saves a channel; before protocol 11 it saves all lighting.
 func (d *Device) SaveCustom(channel byte) error {
 	_, err := d.command(cmdCustomSave, channel)
 	return err
+}
+
+// valueArgs addresses a menu value. Before protocol 11 there were no
+// channels, only lighting values: backlight from 0x09, and RGB light from
+// 0x80, which RGB matrix firmware answers too.
+func (d *Device) valueArgs(channel, id byte) ([]byte, error) {
+	switch {
+	case d.Version >= 11:
+		return []byte{channel, id}, nil
+	case channel == 1 && id >= 1 && id <= 2:
+		return []byte{0x08 + id}, nil
+	case (channel == 2 || channel == 3) && id >= 1 && id <= 4:
+		return []byte{0x7F + id}, nil
+	}
+	return nil, fmt.Errorf("menu channel %d before VIA protocol 11: %w", channel, ErrUnhandled)
 }
 
 func (d *Device) command(cmd byte, args ...byte) ([reportSize]byte, error) {
